@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem,
     QGroupBox, QFrame, QSplitter, QFileDialog, QInputDialog,
     QMessageBox, QHeaderView, QAbstractItemView, QStyledItemDelegate,
+    QListWidgetItem,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QAction
@@ -694,19 +695,23 @@ class BDATab(QWidget):
         self.status_lbl.setStyleSheet("color: green;")
 
         nutrient_cols = self.db.get_bda_columns()
-        display_cols = ["name"] + nutrient_cols[:9]
-        headers = ["Alimento"] + [str(c)[:18] for c in nutrient_cols[:9]]
+        display_cols = ["name"] + nutrient_cols
+        headers = ["Alimento"] + [str(c) for c in nutrient_cols]
         self.tree.setColumnCount(len(display_cols))
         self.tree.setHeaderLabels(headers)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr = self.tree.header()
+        if hdr:
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            hdr.setStretchLastSection(False)
+        self.tree.setColumnWidth(0, 260)
         for i in range(1, len(display_cols)):
-            self.tree.setColumnWidth(i, 95)
+            self.tree.setColumnWidth(i, 90)
 
         foods = self.db.search_bda(self.search_edit.text(), limit=500)
         self.tree.clear()
         for f in foods:
             vals = [f["name"]] + [
-                ("" if f.get(c) is None else str(f[c])) for c in nutrient_cols[:9]
+                ("" if f.get(c) is None else str(f[c])) for c in nutrient_cols
             ]
             self.tree.addTopLevelItem(QTreeWidgetItem(vals))
 
@@ -1150,10 +1155,8 @@ class NutriSummaryFrame(QWidget):
 
         # Colonne nutrizionali nell'ordine della BDA, escluse quelle non numeriche
         nutrient_cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
-        # Tieni solo quelle con almeno un valore non zero
-        active = [c for c in nutrient_cols if any(totals[d].get(c, 0.0) != 0.0 for d in DAYS)]
 
-        if not active:
+        if not nutrient_cols:
             self.info_lbl.setText(f"Utente: {self.user_code} — nessuna voce associata alla BDA.")
             self.info_lbl.setStyleSheet("color: orange;")
             return
@@ -1171,8 +1174,8 @@ class NutriSummaryFrame(QWidget):
             for col in range(1, 6):
                 hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
-        self.table.setRowCount(len(active))
-        for row, col_name in enumerate(active):
+        self.table.setRowCount(len(nutrient_cols))
+        for row, col_name in enumerate(nutrient_cols):
             day_vals = [totals[d].get(col_name, 0.0) for d in DAYS]
             filled = [v for v in day_vals if v != 0.0]
             mean_val = sum(filled) / len(filled) if filled else 0.0
@@ -1310,7 +1313,6 @@ class DiaryTab(QWidget):
         self.user_list.blockSignals(True)
         self.user_list.clear()
         for u in self._users:
-            from PyQt6.QtWidgets import QListWidgetItem
             item = QListWidgetItem(u["code"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             state = Qt.CheckState.Checked if u["code"] in self._checked_users else Qt.CheckState.Unchecked
@@ -1414,16 +1416,18 @@ class DiaryTab(QWidget):
         rows = []
         for user_code in sorted(self._checked_users):
             totals, missing = _compute_user_totals(self.db, user_code)
+            has_any_entry = any(
+                bool(totals[d]) or missing[d] > 0 for d in DAYS
+            )
+            if not has_any_entry:
+                continue
             for day in DAYS:
                 day_totals = totals[day]
-                active_cols = [c for c in nutrient_cols if day_totals.get(c, 0.0) != 0.0]
-                if not active_cols and missing[day] == 0:
-                    continue
                 row: dict = {"Utente": user_code, "Giorno": day}
                 for col in nutrient_cols:
                     val = day_totals.get(col, 0.0)
-                    row[col] = round(val, 4) if val != 0.0 else None
-                row["Voci senza BDA"] = missing[day] if missing[day] else None
+                    row[col] = round(val, 4)
+                row["Voci senza BDA"] = missing[day]
                 rows.append(row)
 
         if not rows:
