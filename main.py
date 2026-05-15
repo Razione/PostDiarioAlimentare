@@ -452,8 +452,12 @@ class UsersTab(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        left_group = QGroupBox("Utenti")
-        left_layout = QVBoxLayout(left_group)
+        self.users_group = QGroupBox("Utenti")
+        left_layout = QVBoxLayout(self.users_group)
+        self.search_user = QLineEdit()
+        self.search_user.setPlaceholderText("Cerca utente…")
+        self.search_user.textChanged.connect(self._filter_users)
+        left_layout.addWidget(self.search_user)
         self.list_widget = QListWidget()
         self.list_widget.setFont(QFont("Courier", 11))
         self.list_widget.currentRowChanged.connect(self._on_select)
@@ -464,8 +468,8 @@ class UsersTab(QWidget):
         btn_del = QPushButton("Elimina")
         btn_del.clicked.connect(self._delete_user)
         left_layout.addWidget(btn_del)
-        left_group.setMaximumWidth(200)
-        layout.addWidget(left_group)
+        self.users_group.setMaximumWidth(200)
+        layout.addWidget(self.users_group)
 
         right_group = QGroupBox("Dettagli")
         right_layout = QFormLayout(right_group)
@@ -485,11 +489,20 @@ class UsersTab(QWidget):
 
     def _refresh(self, notify=True):
         self.users = self.db.get_users()
+        self.users_group.setTitle(f"Utenti ({len(self.users)})")
         self.list_widget.clear()
         for u in self.users:
             self.list_widget.addItem(u["code"])
+        self._filter_users(self.search_user.text())
         if notify and self.on_change:
             self.on_change()
+
+    def _filter_users(self, text=""):
+        q = text.strip().lower()
+        for i, u in enumerate(self.users):
+            item = self.list_widget.item(i)
+            if item:
+                item.setHidden(bool(q) and q not in u["code"].lower())
 
     def _on_select(self, row):
         if row < 0 or row >= len(self.users):
@@ -572,7 +585,7 @@ class DayFrame(QWidget):
         layout.addLayout(tb)
 
         # Colonne: 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà raw 6=Qtà(g) 7=BDA 8=Stato
-        _QTY_COL = 5
+        _QTY_COL = 6
         self._qty_col = _QTY_COL
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([
@@ -626,7 +639,7 @@ class DayFrame(QWidget):
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#b05a00")
+            color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#ffffff")
             for col in range(9):
                 item.setForeground(col, color)
             self.tree.addTopLevelItem(item)
@@ -876,8 +889,14 @@ class DiaryTab(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # ── Pannello sinistro: lista utenti ───────────────────────────────────
-        left = QGroupBox("Utenti")
+        self.users_group = QGroupBox("Utenti")
+        left = self.users_group
         left_layout = QVBoxLayout(left)
+
+        self.search_user = QLineEdit()
+        self.search_user.setPlaceholderText("Cerca utente…")
+        self.search_user.textChanged.connect(self._filter_users)
+        left_layout.addWidget(self.search_user)
 
         self.user_list = QListWidget()
         self.user_list.setFont(QFont("Courier", 11))
@@ -931,8 +950,16 @@ class DiaryTab(QWidget):
 
         layout.addWidget(splitter)
 
+    def _filter_users(self, text=""):
+        q = text.strip().lower()
+        for i, u in enumerate(self._users):
+            item = self.user_list.item(i)
+            if item:
+                item.setHidden(bool(q) and q not in u["code"].lower())
+
     def refresh_users(self):
         self._users = self.db.get_users()
+        self.users_group.setTitle(f"Utenti ({len(self._users)})")
         current_code = self.current_user
         self.user_list.blockSignals(True)
         self.user_list.clear()
@@ -946,6 +973,7 @@ class DiaryTab(QWidget):
             else:
                 self.current_user = None
         self.user_list.blockSignals(False)
+        self._filter_users(self.search_user.text())
 
     def _on_user_change(self, row):
         if row < 0 or row >= len(self._users):
@@ -1225,6 +1253,20 @@ class App(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setStyleSheet("""
+        QTreeWidget::item:selected          { background: #0078d4; color: white; }
+        QTreeWidget::item:selected:!active  { background: #b8d8f0; color: black; }
+        QTreeWidget::item:hover             { background: #e5f1fb; color: black; }
+        QListWidget::item:selected          { background: #0078d4; color: white; }
+        QListWidget::item:selected:!active  { background: #b8d8f0; color: black; }
+        QListWidget::item:hover             { background: #e5f1fb; color: black; }
+        QTableWidget::item:selected         { background: #0078d4; color: white; }
+        QTableWidget::item:selected:!active { background: #b8d8f0; color: black; }
+        QTableWidget::item:hover            { background: #e5f1fb; color: black; }
+        QTreeWidget QLineEdit               { background: white; color: black;
+                                              selection-background-color: #0078d4;
+                                              selection-color: white; }
+    """)
     window = App()
     window.show()
     sys.exit(app.exec())
