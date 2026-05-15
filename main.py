@@ -6,6 +6,7 @@ Lancia con:  python main.py
 
 import sys
 import re
+import json
 import pandas as pd
 
 from PyQt6.QtWidgets import (
@@ -238,6 +239,100 @@ class BDAImportDialog(QDialog):
         self.accept()
 
 
+class PreferencesDialog(QDialog):
+    """Preferenze: configura le coppie nutriente/soglia per il calcolo mNOVA."""
+
+    def __init__(self, parent, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Preferenze – Cutoff mNOVA")
+        self.resize(520, 380)
+        self._build()
+        self._load()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        lbl = QLabel(
+            "Definisci i cutoff per mNOVA (NOVA 3 → 3a/3b, NOVA 4 → 4a/4b).\n"
+            "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'."
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Nutriente (colonna BDA)", "Soglia"])
+        hdr = self.table.horizontalHeader()
+        if hdr:
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ Aggiungi")
+        btn_add.clicked.connect(self._add_row)
+        btn_row.addWidget(btn_add)
+        btn_del = QPushButton("Rimuovi")
+        btn_del.clicked.connect(self._remove_row)
+        btn_row.addWidget(btn_del)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(sep)
+
+        ok_row = QHBoxLayout()
+        ok_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        ok_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self._save)
+        btn_ok.setDefault(True)
+        ok_row.addWidget(btn_ok)
+        layout.addLayout(ok_row)
+
+    def _cols(self):
+        return self.db.get_bda_columns() or []
+
+    def _add_row(self, col_name="", threshold=""):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        cb = QComboBox()
+        cb.addItems(self._cols())
+        if col_name:
+            idx = cb.findText(col_name)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+        self.table.setCellWidget(row, 0, cb)
+        self.table.setItem(row, 1, QTableWidgetItem(str(threshold)))
+
+    def _remove_row(self):
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        for r in sorted(rows, reverse=True):
+            self.table.removeRow(r)
+
+    def _load(self):
+        for c in _load_cutoffs(self.db):
+            self._add_row(c.get("col", ""), c.get("threshold", ""))
+
+    def _save(self):
+        cutoffs = []
+        for row in range(self.table.rowCount()):
+            cb = self.table.cellWidget(row, 0)
+            it = self.table.item(row, 1)
+            if not isinstance(cb, QComboBox) or it is None:
+                continue
+            try:
+                cutoffs.append({"col": cb.currentText(), "threshold": float(it.text().replace(",", "."))})
+            except ValueError:
+                pass
+        self.db.set_setting("mnova_cutoffs", json.dumps(cutoffs, ensure_ascii=False))
+        self.accept()
+
+
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
@@ -297,21 +392,68 @@ class DiaryImportDialog(QDialog):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-class _SelectiveEditDelegate(QStyledItemDelegate):
-    """Delegate che permette l'editing inline solo sulla colonna specificata."""
-    def __init__(self, editable_col: int, parent=None):
+def _qty_display(qty) -> str:
+    """Formatta quantity_g per la visualizzazione: None → '—', altrimenti numero."""
+    return "—" if qty is None else f"{qty:.4g}"
+
+
+def _load_cutoffs(db) -> list:
+    """Carica i cutoff mNOVA dal DB (lista di {'col': str, 'threshold': float})."""
+    try:
+        return json.loads(db.get_setting("mnova_cutoffs", "[]"))
+    except Exception:
+        return []
+
+
+def _compute_mnova(nova, bda_data: dict | None, cutoffs: list) -> str:
+    """Calcola l'etichetta mNOVA.
+    NOVA 1/2 → uguale a NOVA; NOVA 3/4 → 'a' o 'b' in base ai cutoff."""
+    if nova is None:
+        return ""
+    if nova in (1, 2):
+        return str(nova)
+    if not bda_data or not cutoffs:
+        return str(nova)
+    is_b = any(
+        c.get("col") and c.get("threshold") is not None
+        and bda_data.get(c["col"]) is not None
+        and float(bda_data[c["col"]]) > float(c["threshold"])
+        for c in cutoffs
+    )
+    return f"{nova}b" if is_b else f"{nova}a"
+
+
+class _DayFrameDelegate(QStyledItemDelegate):
+    """Delegate per DayFrame: QLineEdit su Qtà, QComboBox su NOVA."""
+
+    def __init__(self, qty_col: int, nova_col: int, parent=None):
         super().__init__(parent)
-        self._col = editable_col
+        self._qty_col = qty_col
+        self._nova_col = nova_col
 
     def createEditor(self, parent, option, index):
-        if index.column() != self._col:
-            return None
-        return super().createEditor(parent, option, index)
+        col = index.column()
+        if col == self._qty_col:
+            return super().createEditor(parent, option, index)
+        if col == self._nova_col:
+            cb = QComboBox(parent)
+            cb.addItems(["—", "1", "2", "3", "4"])
+            return cb
+        return None
 
+    def setEditorData(self, editor, index):
+        if index.column() == self._nova_col and isinstance(editor, QComboBox):
+            txt = index.data(Qt.ItemDataRole.DisplayRole) or "—"
+            i = editor.findText(txt)
+            editor.setCurrentIndex(max(i, 0))
+        else:
+            super().setEditorData(editor, index)
 
-def _qty_display(qty) -> str:
-    """Formatta quantity_g per la visualizzazione: None → '—', altrimenti intero."""
-    return "—" if qty is None else f"{qty:.4g}"
+    def setModelData(self, editor, model, index):
+        if index.column() == self._nova_col and isinstance(editor, QComboBox) and model:
+            model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
+        else:
+            super().setModelData(editor, model, index)
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -584,30 +726,34 @@ class DayFrame(QWidget):
         tb.addStretch()
         layout.addLayout(tb)
 
-        # Colonne: 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà raw 6=Qtà(g) 7=BDA 8=Stato
-        _QTY_COL = 6
-        self._qty_col = _QTY_COL
+        # 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà org. 6=Qtà(g) 7=BDA 8=Stato 9=NOVA 10=mNOVA
+        self._qty_col   = 6
+        self._nova_col  = 9
+        self._mnova_col = 10
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([
             "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
-            "Qtà org.", "Qtà (g)",  "Alimento BDA", "Stato",
+            "Qtà org.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
         ])
-        self.tree.setColumnWidth(0, 120)
-        self.tree.setColumnWidth(1, 65)
-        self.tree.setColumnWidth(2, 100)
+        self.tree.setColumnWidth(0, 110)
+        self.tree.setColumnWidth(1, 60)
+        self.tree.setColumnWidth(2, 95)
         self.tree.setColumnWidth(3, 100)
-        self.tree.setColumnWidth(4, 200)
-        self.tree.setColumnWidth(5, 60)
-        self.tree.setColumnWidth(6, 60)
-        self.tree.setColumnWidth(7, 180)
-
+        self.tree.setColumnWidth(4, 180)
+        self.tree.setColumnWidth(5, 80)
+        self.tree.setColumnWidth(6, 55)
+        self.tree.setColumnWidth(7, 170)
+        self.tree.setColumnWidth(8, 38)
+        self.tree.setColumnWidth(9, 48)
+        self.tree.setColumnWidth(10, 55)
         hdr = self.tree.header()
         if hdr:
-            hdr.setStretchLastSection(True)
+            hdr.setStretchLastSection(False)
+            hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setItemDelegate(_SelectiveEditDelegate(_QTY_COL, self.tree))
-        self.tree.itemChanged.connect(self._on_qty_changed)
+        self.tree.setItemDelegate(_DayFrameDelegate(self._qty_col, self._nova_col, self.tree))
+        self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.tree)
 
@@ -625,7 +771,14 @@ class DayFrame(QWidget):
             self.db.get_entries(self.user_code, day=self.day),
             key=lambda e: (MEAL_ORDER.get(e["meal"], 99), e["id"]),
         )
+        bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
+        bda_cache = self.db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
+        cutoffs = _load_cutoffs(self.db)
+
         for e in entries:
+            nova = e.get("nova")
+            bda_data = bda_cache.get(e["bda_food_id"]) if e.get("bda_food_id") else None
+            mnova = _compute_mnova(nova, bda_data, cutoffs)
             item = QTreeWidgetItem([
                 e["meal"],
                 e.get("ora") or "",
@@ -636,11 +789,13 @@ class DayFrame(QWidget):
                 _qty_display(e.get("quantity_g")),
                 e.get("bda_name") or "—",
                 "✓" if e["bda_food_id"] else "—",
+                str(nova) if nova is not None else "—",
+                mnova or "—",
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#ffffff")
-            for col in range(9):
+            color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#b05a00")
+            for col in range(11):
                 item.setForeground(col, color)
             self.tree.addTopLevelItem(item)
         self.tree.blockSignals(False)
@@ -709,32 +864,51 @@ class DayFrame(QWidget):
         self._refresh()
 
     def _on_double_click(self, item, column):
-        if column == self._qty_col:
+        if column in (self._qty_col, self._nova_col):
             self.tree.editItem(item, column)
         else:
             self._associate_bda()
 
-    def _on_qty_changed(self, item, column):
-        if column != self._qty_col:
-            return
+    def _on_item_changed(self, item, column):
         eid = item.data(0, Qt.ItemDataRole.UserRole)
         if eid is None:
             return
-        txt = item.text(column).strip()
-        if not txt or txt == "—":
-            qty = None
-        else:
-            try:
-                qty = float(txt.replace(",", "."))
-            except ValueError:
+
+        if column == self._qty_col:
+            txt = item.text(column).strip()
+            qty = None if (not txt or txt == "—") else None
+            if txt and txt != "—":
+                try:
+                    qty = float(txt.replace(",", "."))
+                except ValueError:
+                    self.tree.blockSignals(True)
+                    item.setText(column, _qty_display(None))
+                    self.tree.blockSignals(False)
+                    return
+            self.db.update_entry(eid, quantity_g=qty)
+            self.tree.blockSignals(True)
+            item.setText(column, _qty_display(qty))
+            self.tree.blockSignals(False)
+
+        elif column == self._nova_col:
+            txt = item.text(column).strip()
+            nova = None if (not txt or txt == "—") else int(txt) if txt in ("1", "2", "3", "4") else None
+            if txt and txt not in ("—", "1", "2", "3", "4"):
                 self.tree.blockSignals(True)
-                item.setText(column, _qty_display(None))
+                item.setText(column, "—")
                 self.tree.blockSignals(False)
                 return
-        self.db.update_entry(eid, quantity_g=qty)
-        self.tree.blockSignals(True)
-        item.setText(column, _qty_display(qty))
-        self.tree.blockSignals(False)
+            self.db.update_entry(eid, nova=nova)
+            entry_bda_id = next(
+                (e["bda_food_id"] for e in self.db.get_entries(self.user_code, self.day) if e["id"] == eid),
+                None,
+            )
+            bda_data = self.db.get_bda_food(entry_bda_id) if entry_bda_id else None
+            mnova = _compute_mnova(nova, bda_data, _load_cutoffs(self.db))
+            self.tree.blockSignals(True)
+            item.setText(self._nova_col, str(nova) if nova is not None else "—")
+            item.setText(self._mnova_col, mnova or "—")
+            self.tree.blockSignals(False)
 
 
 # Colonne BDA che non sono valori nutrizionali (da escludere dal riepilogo)
@@ -1217,6 +1391,11 @@ class App(QMainWindow):
         act_exit.triggered.connect(self.close)
         file_m.addAction(act_exit)
 
+        pref_m = mb.addMenu("Preferenze")
+        act_mnova = QAction("Cutoff mNOVA…", self)
+        act_mnova.triggered.connect(self._open_preferences)
+        pref_m.addAction(act_mnova)
+
         help_m = mb.addMenu("Aiuto")
         act_about = QAction("Informazioni", self)
         act_about.triggered.connect(self._about)
@@ -1240,6 +1419,12 @@ class App(QMainWindow):
             on_change=lambda: self.users_tab._refresh(notify=False),
         )
         self.nb.addTab(self.diary_tab, "  Diari  ")
+
+    def _open_preferences(self):
+        dlg = PreferencesDialog(self, self.db)
+        if dlg.exec() == QDialog.DialogCode.Accepted and self.diary_tab.current_user:
+            row = self.diary_tab.user_list.currentRow()
+            self.diary_tab._on_user_change(row)
 
     def _about(self):
         QMessageBox.information(

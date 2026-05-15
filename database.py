@@ -49,7 +49,8 @@ class Database:
                     notes       TEXT    DEFAULT '',
                     ora         TEXT    DEFAULT '',
                     luogo       TEXT    DEFAULT '',
-                    qty_raw     TEXT    DEFAULT ''
+                    qty_raw     TEXT    DEFAULT '',
+                    nova        INTEGER DEFAULT NULL
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key   TEXT PRIMARY KEY,
@@ -65,9 +66,10 @@ class Database:
         # Migrations: add columns to existing tables if not present
         with self._conn() as conn:
             for stmt in [
-                "ALTER TABLE diary_entries ADD COLUMN ora     TEXT DEFAULT ''",
-                "ALTER TABLE diary_entries ADD COLUMN luogo   TEXT DEFAULT ''",
-                "ALTER TABLE diary_entries ADD COLUMN qty_raw TEXT DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN ora     TEXT    DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN luogo   TEXT    DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN qty_raw TEXT    DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN nova    INTEGER DEFAULT NULL",
             ]:
                 try:
                     conn.execute(stmt)
@@ -132,6 +134,17 @@ class Database:
             ).fetchall()
         return [{"id": r["id"], "name": r["name"], **json.loads(r["data"])} for r in rows]
 
+    def get_bda_foods_by_ids(self, ids):
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT id, name, data FROM bda_foods WHERE id IN ({placeholders})",
+                list(ids),
+            ).fetchall()
+        return {r["id"]: {"id": r["id"], "name": r["name"], **json.loads(r["data"])} for r in rows}
+
     def get_bda_food(self, food_id):
         with self._conn() as conn:
             r = conn.execute(
@@ -191,7 +204,7 @@ class Database:
     def get_entries(self, user_code, day=None):
         sql = """
             SELECT de.id, de.day, de.meal, de.food_name, de.quantity_g,
-                   de.bda_food_id, de.notes, de.ora, de.luogo, de.qty_raw,
+                   de.bda_food_id, de.notes, de.ora, de.luogo, de.qty_raw, de.nova,
                    bf.name AS bda_name
             FROM diary_entries de
             LEFT JOIN bda_foods bf ON de.bda_food_id = bf.id
@@ -219,7 +232,7 @@ class Database:
             )
 
     def update_entry(self, entry_id, **kwargs):
-        allowed = {"food_name", "quantity_g", "meal", "day", "notes", "ora", "luogo", "qty_raw"}
+        allowed = {"food_name", "quantity_g", "meal", "day", "notes", "ora", "luogo", "qty_raw", "nova"}
         fields = [(k, v) for k, v in kwargs.items() if k in allowed]
         if not fields:
             return
