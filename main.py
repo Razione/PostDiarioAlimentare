@@ -5,6 +5,7 @@ Lancia con:  python main.py
 """
 
 import sys
+import re
 import pandas as pd
 
 from PyQt6.QtWidgets import (
@@ -12,8 +13,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QLineEdit, QComboBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QListWidget,
+    QTableWidget, QTableWidgetItem,
     QGroupBox, QFrame, QSplitter, QFileDialog, QInputDialog,
-    QMessageBox, QHeaderView, QAbstractItemView,
+    QMessageBox, QHeaderView, QAbstractItemView, QStyledItemDelegate,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QAction
@@ -26,6 +28,32 @@ MEALS = ["Colazione", "Spuntino mattina", "Pranzo", "Spuntino pomeriggio", "Cena
 MEAL_ORDER = {m: i for i, m in enumerate(MEALS)}
 DAYS = [1, 2, 3, 4]
 APP_TITLE = "Analizzatore Diari Alimentari"
+
+# Struttura del Content Export: offset rispetto alla colonna "Data" di ciascun giorno
+# (meal_name, offset_primo_alimento, numero_max_alimenti)
+_CONTENT_EXPORT_MEALS = [
+    ("Colazione",            4,   20),
+    ("Spuntino mattina",    66,   15),
+    ("Pranzo",             113,   30),
+    ("Spuntino pomeriggio", 205,  15),
+    ("Cena",               252,   30),
+]
+# Colonne "Data" dove inizia ognuno dei 4 giorni nel DataFrame concatenato
+_CONTENT_EXPORT_DAY_COLS = [1, 343, 685, 1027]
+
+
+def _parse_qty_grams(raw: str):
+    """Estrae i grammi da una stringa libera (es. '250 g', '80gr').
+    Ritorna None se non riesce a determinare un peso in grammi."""
+    if not raw or raw.lower() == "nan":
+        return None
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:gr?(?:amm?[io]?)?)\b", raw, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1).replace(",", "."))
+        except ValueError:
+            pass
+    return None
 
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -108,7 +136,10 @@ class AddEditEntryDialog(QDialog):
         self.food_edit = QLineEdit(entry["food_name"] if editing else "")
         form.addRow("Alimento:", self.food_edit)
 
-        self.qty_edit = QLineEdit(str(entry["quantity_g"]) if editing else "100")
+        qty_val = entry.get("quantity_g") if editing else None
+        qty_str = f"{qty_val:.4g}" if qty_val is not None else ""
+        self.qty_edit = QLineEdit(qty_str)
+        self.qty_edit.setPlaceholderText("—")
         form.addRow("Quantità (g):", self.qty_edit)
 
         self.meal_combo = QComboBox()
@@ -145,11 +176,15 @@ class AddEditEntryDialog(QDialog):
         if not name:
             QMessageBox.warning(self, "Attenzione", "Inserire il nome dell'alimento.")
             return
-        try:
-            qty = float(self.qty_edit.text().replace(",", "."))
-        except ValueError:
-            QMessageBox.warning(self, "Attenzione", "Quantità non valida.")
-            return
+        qty_txt = self.qty_edit.text().strip()
+        if not qty_txt or qty_txt == "—":
+            qty = None
+        else:
+            try:
+                qty = float(qty_txt.replace(",", "."))
+            except ValueError:
+                QMessageBox.warning(self, "Attenzione", "Quantità non valida.")
+                return
         self.result = {
             "food_name": name,
             "quantity_g": qty,
@@ -258,6 +293,25 @@ class DiaryImportDialog(QDialog):
             mapping[key] = val or None
         self.result = mapping
         self.accept()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+class _SelectiveEditDelegate(QStyledItemDelegate):
+    """Delegate che permette l'editing inline solo sulla colonna specificata."""
+    def __init__(self, editable_col: int, parent=None):
+        super().__init__(parent)
+        self._col = editable_col
+
+    def createEditor(self, parent, option, index):
+        if index.column() != self._col:
+            return None
+        return super().createEditor(parent, option, index)
+
+
+def _qty_display(qty) -> str:
+    """Formatta quantity_g per la visualizzazione: None → '—', altrimenti intero."""
+    return "—" if qty is None else f"{qty:.4g}"
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -517,16 +571,30 @@ class DayFrame(QWidget):
         tb.addStretch()
         layout.addLayout(tb)
 
+        # Colonne: 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Qtà(g) 5=Qtà raw 6=BDA 7=Stato 8=Note
+        _QTY_COL = 4
+        self._qty_col = _QTY_COL
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Pasto", "Alimento (diario)", "Qtà (g)", "Alimento BDA", "Stato"])
-        self.tree.setColumnWidth(0, 140)
-        self.tree.setColumnWidth(1, 220)
-        self.tree.setColumnWidth(2, 80)
-        self.tree.setColumnWidth(3, 220)
+        self.tree.setHeaderLabels([
+            "Pasto", "Ora", "Luogo", "Alimento (diario)",
+            "Qtà (g)", "Qtà originale", "Alimento BDA", "Stato", "Note",
+        ])
+        self.tree.setColumnWidth(0, 120)
+        self.tree.setColumnWidth(1, 65)
+        self.tree.setColumnWidth(2, 100)
+        self.tree.setColumnWidth(3, 190)
         self.tree.setColumnWidth(4, 60)
+        self.tree.setColumnWidth(5, 100)
+        self.tree.setColumnWidth(6, 180)
+        self.tree.setColumnWidth(7, 42)
+        hdr = self.tree.header()
+        if hdr:
+            hdr.setStretchLastSection(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setAlternatingRowColors(True)
-        self.tree.itemDoubleClicked.connect(lambda _: self._associate_bda())
+        self.tree.setItemDelegate(_SelectiveEditDelegate(_QTY_COL, self.tree))
+        self.tree.itemChanged.connect(self._on_qty_changed)
+        self.tree.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.tree)
 
     def load_user(self, user_code):
@@ -534,8 +602,10 @@ class DayFrame(QWidget):
         self._refresh()
 
     def _refresh(self):
+        self.tree.blockSignals(True)
         self.tree.clear()
         if not self.user_code:
+            self.tree.blockSignals(False)
             return
         entries = sorted(
             self.db.get_entries(self.user_code, day=self.day),
@@ -544,16 +614,22 @@ class DayFrame(QWidget):
         for e in entries:
             item = QTreeWidgetItem([
                 e["meal"],
+                e.get("ora") or "",
+                e.get("luogo") or "",
                 e["food_name"],
-                f"{e['quantity_g']:.0f}",
+                _qty_display(e.get("quantity_g")),
+                e.get("qty_raw") or "",
                 e.get("bda_name") or "—",
                 "✓" if e["bda_food_id"] else "—",
+                e.get("notes") or "",
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#b05a00")
-            for col in range(5):
+            for col in range(9):
                 item.setForeground(col, color)
             self.tree.addTopLevelItem(item)
+        self.tree.blockSignals(False)
 
     def _selected_id(self):
         items = self.tree.selectedItems()
@@ -618,6 +694,170 @@ class DayFrame(QWidget):
         self.db.associate_bda(eid, None)
         self._refresh()
 
+    def _on_double_click(self, item, column):
+        if column == self._qty_col:
+            self.tree.editItem(item, column)
+        else:
+            self._associate_bda()
+
+    def _on_qty_changed(self, item, column):
+        if column != self._qty_col:
+            return
+        eid = item.data(0, Qt.ItemDataRole.UserRole)
+        if eid is None:
+            return
+        txt = item.text(column).strip()
+        if not txt or txt == "—":
+            qty = None
+        else:
+            try:
+                qty = float(txt.replace(",", "."))
+            except ValueError:
+                self.tree.blockSignals(True)
+                item.setText(column, _qty_display(None))
+                self.tree.blockSignals(False)
+                return
+        self.db.update_entry(eid, quantity_g=qty)
+        self.tree.blockSignals(True)
+        item.setText(column, _qty_display(qty))
+        self.tree.blockSignals(False)
+
+
+# Colonne BDA che non sono valori nutrizionali (da escludere dal riepilogo)
+_SKIP_BDA_COLS = {
+    "Simbolo", "Codice Alimento", "Nome Alimento ENG",
+    "Nome Scientifico", "Categoria Merceologica", "parte edibile",
+}
+
+
+class NutriSummaryFrame(QWidget):
+    """Tab riepilogo: valori nutrizionali calcolati dalla BDA, per giorno."""
+
+    def __init__(self, db: Database):
+        super().__init__()
+        self.db = db
+        self.user_code = None
+        self._build()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        top = QHBoxLayout()
+        self.info_lbl = QLabel("Seleziona un utente per visualizzare il riepilogo nutrizionale.")
+        self.info_lbl.setStyleSheet("color: gray;")
+        top.addWidget(self.info_lbl)
+        top.addStretch()
+        btn_refresh = QPushButton("Aggiorna")
+        btn_refresh.clicked.connect(self._refresh)
+        top.addWidget(btn_refresh)
+        layout.addLayout(top)
+
+        self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        hdr = self.table.horizontalHeader()
+        if hdr:
+            hdr.setStretchLastSection(False)
+        layout.addWidget(self.table)
+
+        self.warn_lbl = QLabel("")
+        self.warn_lbl.setStyleSheet("color: darkorange;")
+        self.warn_lbl.setWordWrap(True)
+        layout.addWidget(self.warn_lbl)
+
+    def load_user(self, user_code):
+        self.user_code = user_code
+        self._refresh()
+
+    def _refresh(self):
+        self.table.clearContents()
+        self.table.setRowCount(0)
+        self.warn_lbl.setText("")
+
+        if not self.user_code:
+            self.info_lbl.setText("Seleziona un utente per visualizzare il riepilogo nutrizionale.")
+            self.info_lbl.setStyleSheet("color: gray;")
+            return
+
+        if self.db.count_bda() == 0:
+            self.info_lbl.setText("Nessuna BDA caricata.")
+            self.info_lbl.setStyleSheet("color: gray;")
+            return
+
+        totals, missing = self._compute_totals()
+
+        # Colonne nutrizionali nell'ordine della BDA, escluse quelle non numeriche
+        nutrient_cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
+        # Tieni solo quelle con almeno un valore non zero
+        active = [c for c in nutrient_cols if any(totals[d].get(c, 0.0) != 0.0 for d in DAYS)]
+
+        if not active:
+            self.info_lbl.setText(f"Utente: {self.user_code} — nessuna voce associata alla BDA.")
+            self.info_lbl.setStyleSheet("color: orange;")
+            return
+
+        self.info_lbl.setText(f"Utente: {self.user_code}")
+        self.info_lbl.setStyleSheet("")
+
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(
+            ["Nutriente", "Giorno 1", "Giorno 2", "Giorno 3", "Giorno 4", "Media"]
+        )
+        hdr = self.table.horizontalHeader()
+        if hdr:
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            for col in range(1, 6):
+                hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+
+        self.table.setRowCount(len(active))
+        for row, col_name in enumerate(active):
+            day_vals = [totals[d].get(col_name, 0.0) for d in DAYS]
+            filled = [v for v in day_vals if v != 0.0]
+            mean_val = sum(filled) / len(filled) if filled else 0.0
+
+            self.table.setItem(row, 0, QTableWidgetItem(str(col_name)))
+            for col_idx, val in enumerate(day_vals):
+                txt = f"{val:.2f}" if val != 0.0 else "—"
+                item = QTableWidgetItem(txt)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(row, col_idx + 1, item)
+            mean_item = QTableWidgetItem(f"{mean_val:.2f}" if mean_val != 0.0 else "—")
+            mean_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 5, mean_item)
+
+        warn_parts = [
+            f"Giorno {d}: {missing[d]} voci senza BDA"
+            for d in DAYS if missing[d] > 0
+        ]
+        if warn_parts:
+            self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
+
+    def _compute_totals(self):
+        totals = {d: {} for d in DAYS}
+        missing = {d: 0 for d in DAYS}
+
+        for e in self.db.get_entries(self.user_code):
+            day = e["day"]
+            if not e["bda_food_id"]:
+                missing[day] += 1
+                continue
+            bda = self.db.get_bda_food(e["bda_food_id"])
+            if not bda:
+                continue
+            qty = e["quantity_g"] if e["quantity_g"] is not None else 100.0
+            factor = qty / 100.0
+            for col, val in bda.items():
+                if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
+                    continue
+                try:
+                    totals[day][col] = totals[day].get(col, 0.0) + float(val) * factor
+                except (TypeError, ValueError):
+                    pass
+
+        return totals, missing
+
 
 class DiaryTab(QWidget):
     def __init__(self, db: Database, on_change=None):
@@ -659,6 +899,10 @@ class DiaryTab(QWidget):
         btn_import.clicked.connect(self._import_diary)
         left_layout.addWidget(btn_import)
 
+        btn_import_ce = QPushButton("Importa Content Export")
+        btn_import_ce.clicked.connect(self._import_content_export)
+        left_layout.addWidget(btn_import_ce)
+
         splitter.addWidget(left)
 
         # ── Pannello destro: 4 tab dei giorni ─────────────────────────────────
@@ -672,6 +916,11 @@ class DiaryTab(QWidget):
             frm = DayFrame(self.db, d)
             self.day_nb.addTab(frm, f"  Giorno {d}  ")
             self.day_frames.append(frm)
+
+        self.nutri_frame = NutriSummaryFrame(self.db)
+        self.day_nb.addTab(self.nutri_frame, "  Riepilogo nutrizionale  ")
+        self.day_nb.currentChanged.connect(self._on_tab_changed)
+
         right_layout.addWidget(self.day_nb)
 
         splitter.addWidget(right)
@@ -702,8 +951,17 @@ class DiaryTab(QWidget):
             return
         code = self._users[row]["code"]
         self.current_user = code
-        for frm in self.day_frames:
+        for d, frm in zip(DAYS, self.day_frames):
             frm.load_user(code)
+            date_label = self.db.get_day_meta(code, d)
+            tab_title = f"  Giorno {d} – {date_label}  " if date_label else f"  Giorno {d}  "
+            self.day_nb.setTabText(d - 1, tab_title)
+        self.nutri_frame.load_user(code)
+
+    def _on_tab_changed(self, idx):
+        # Aggiorna il riepilogo ogni volta che viene selezionato il tab
+        if idx == len(DAYS):
+            self.nutri_frame._refresh()
 
     def _add_user(self):
         code, ok = QInputDialog.getText(self, "Nuovo utente", "Codice utente:")
@@ -791,6 +1049,111 @@ class DiaryTab(QWidget):
         msg = f"Importate {imported} voci."
         if skipped:
             msg += f"\n{skipped} righe ignorate per errori o dati mancanti."
+        QMessageBox.information(self, "Importazione completata", msg)
+        self.refresh_users()
+        if self.on_change:
+            self.on_change()
+        if self.current_user:
+            self._on_user_change(self.user_list.currentRow())
+
+    def _import_content_export(self):
+        """Importa il file Content_Export: 6 fogli concatenati orizzontalmente,
+        una riga per utente, 4 giorni di diario codificati in larghezza."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Seleziona file Content Export", "",
+            "Excel (*.xlsx *.xls);;Tutti i file (*.*)",
+        )
+        if not path:
+            return
+
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                xl = pd.ExcelFile(path)
+                frames = [pd.read_excel(xl, sheet_name=s, header=None) for s in xl.sheet_names]
+            df_full = pd.concat(frames, axis=1, ignore_index=True)
+        except Exception as exc:
+            QMessageBox.critical(self, "Errore lettura file", str(exc))
+            return
+
+        # I dati iniziano alla riga 4 (0-3 = metadata + header)
+        data = df_full.iloc[4:].reset_index(drop=True)
+        ncols = df_full.shape[1]
+
+        imported, skipped = 0, 0
+
+        for _, row in data.iterrows():
+            raw_user = str(row.iloc[0])
+            user_code = raw_user.strip().strip("\r\n")
+            if not user_code or user_code.lower() == "nan":
+                continue
+
+            for day_idx, day_col in enumerate(_CONTENT_EXPORT_DAY_COLS):
+                if day_col >= ncols:
+                    continue
+                raw_date = row.iloc[day_col]
+                if pd.isna(raw_date) or str(raw_date).strip().lower() == "nan":
+                    continue  # questo giorno non è compilato
+
+                day_num = day_idx + 1
+
+                # Salva solo la data come etichetta del giorno (es. "15/03/2024")
+                if isinstance(raw_date, pd.Timestamp):
+                    date_str = raw_date.strftime("%d/%m/%Y")
+                else:
+                    date_str = str(raw_date).strip()
+                self.db.add_user(user_code)
+                self.db.set_day_meta(user_code, day_num, date_str)
+
+                # Sovrascrittura: elimina le voci esistenti per questo utente+giorno
+                self.db.delete_entries_for_day(user_code, day_num)
+
+                for meal_name, food_offset, max_items in _CONTENT_EXPORT_MEALS:
+                    # Ora e Luogo del pasto sono nelle 2 colonne prima dei cibi
+                    ora_col = day_col + food_offset - 2
+                    luogo_col = day_col + food_offset - 1
+                    meal_ora = ""
+                    meal_luogo = ""
+                    if 0 <= ora_col < ncols:
+                        v = str(row.iloc[ora_col]).strip()
+                        if v and v.lower() != "nan":
+                            meal_ora = v
+                    if 0 <= luogo_col < ncols:
+                        v = str(row.iloc[luogo_col]).strip()
+                        if v and v.lower() != "nan":
+                            meal_luogo = v
+
+                    for i in range(max_items):
+                        fc = day_col + food_offset + i * 3
+                        if fc >= ncols:
+                            break
+                        food_name = str(row.iloc[fc]).strip()
+                        if not food_name or food_name.lower() == "nan":
+                            continue
+
+                        desc = str(row.iloc[fc + 1]).strip() if fc + 1 < ncols else ""
+                        qty_raw = str(row.iloc[fc + 2]).strip() if fc + 2 < ncols else ""
+                        if desc.lower() == "nan":
+                            desc = ""
+                        if qty_raw.lower() == "nan":
+                            qty_raw = ""
+
+                        qty_g = _parse_qty_grams(qty_raw)
+                        notes = desc
+
+                        try:
+                            self.db.add_entry(user_code, day_num, meal_name,
+                                              food_name, qty_g, notes,
+                                              ora=meal_ora, luogo=meal_luogo,
+                                              qty_raw=qty_raw)
+                            imported += 1
+                        except Exception:
+                            skipped += 1
+
+        msg = f"Importate {imported} voci da Content Export."
+        if skipped:
+            msg += f"\n{skipped} voci ignorate per errori."
         QMessageBox.information(self, "Importazione completata", msg)
         self.refresh_users()
         if self.on_change:

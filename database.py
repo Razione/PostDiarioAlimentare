@@ -15,7 +15,6 @@ class Database:
 
     @contextlib.contextmanager
     def _conn(self):
-        """Context manager that opens, commits/rolls back, and always closes."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
@@ -45,20 +44,78 @@ class Database:
                     day         INTEGER NOT NULL CHECK(day BETWEEN 1 AND 4),
                     meal        TEXT    NOT NULL,
                     food_name   TEXT    NOT NULL,
-                    quantity_g  REAL    NOT NULL DEFAULT 100.0,
+                    quantity_g  REAL    DEFAULT NULL,
                     bda_food_id INTEGER,
-                    notes       TEXT    DEFAULT ''
+                    notes       TEXT    DEFAULT '',
+                    ora         TEXT    DEFAULT '',
+                    luogo       TEXT    DEFAULT '',
+                    qty_raw     TEXT    DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key   TEXT PRIMARY KEY,
                     value TEXT
                 );
+                CREATE TABLE IF NOT EXISTS diary_day_meta (
+                    user_code  TEXT    NOT NULL,
+                    day        INTEGER NOT NULL,
+                    date_label TEXT    DEFAULT '',
+                    PRIMARY KEY (user_code, day)
+                );
             """)
+        # Migrations: add columns to existing tables if not present
+        with self._conn() as conn:
+            for stmt in [
+                "ALTER TABLE diary_entries ADD COLUMN ora     TEXT DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN luogo   TEXT DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN qty_raw TEXT DEFAULT ''",
+            ]:
+                try:
+                    conn.execute(stmt)
+                except Exception:
+                    pass
+        # Migration: make quantity_g nullable (recreate table if currently NOT NULL)
+        self._migrate_nullable_qty()
+
+    def _migrate_nullable_qty(self):
+        """Recreate diary_entries to allow NULL quantity_g if still NOT NULL."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            col_info = conn.execute("PRAGMA table_info(diary_entries)").fetchall()
+            qty_col = next((c for c in col_info if c["name"] == "quantity_g"), None)
+            if qty_col is None or qty_col["notnull"] == 0:
+                return  # already nullable
+            # All new columns already added by ALTER TABLE above
+            conn.executescript("""
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE diary_entries_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_code   TEXT    NOT NULL,
+                    day         INTEGER NOT NULL CHECK(day BETWEEN 1 AND 4),
+                    meal        TEXT    NOT NULL,
+                    food_name   TEXT    NOT NULL,
+                    quantity_g  REAL    DEFAULT NULL,
+                    bda_food_id INTEGER,
+                    notes       TEXT    DEFAULT '',
+                    ora         TEXT    DEFAULT '',
+                    luogo       TEXT    DEFAULT '',
+                    qty_raw     TEXT    DEFAULT ''
+                );
+                INSERT INTO diary_entries_new
+                    SELECT id, user_code, day, meal, food_name,
+                           CASE WHEN quantity_g = 100.0 THEN NULL ELSE quantity_g END,
+                           bda_food_id, notes, ora, luogo, qty_raw
+                    FROM diary_entries;
+                DROP TABLE diary_entries;
+                ALTER TABLE diary_entries_new RENAME TO diary_entries;
+                PRAGMA foreign_keys=ON;
+            """)
+        finally:
+            conn.close()
 
     # ── BDA ──────────────────────────────────────────────────────────────────
 
     def import_bda(self, records):
-        """Replace all BDA foods with the given list of {'name', 'data'} dicts."""
         with self._conn() as conn:
             conn.execute("DELETE FROM bda_foods")
             conn.executemany(
@@ -120,18 +177,21 @@ class Database:
 
     # ── Diary entries ─────────────────────────────────────────────────────────
 
-    def add_entry(self, user_code, day, meal, food_name, quantity_g=100.0, notes=""):
+    def add_entry(self, user_code, day, meal, food_name,
+                  quantity_g=None, notes="", ora="", luogo="", qty_raw=""):
+        qty = float(quantity_g) if quantity_g is not None else None
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO diary_entries "
-                "(user_code, day, meal, food_name, quantity_g, notes) VALUES (?,?,?,?,?,?)",
-                (user_code, int(day), meal, food_name, float(quantity_g), notes),
+                "(user_code, day, meal, food_name, quantity_g, notes, ora, luogo, qty_raw) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (user_code, int(day), meal, food_name, qty, notes, ora, luogo, qty_raw),
             )
 
     def get_entries(self, user_code, day=None):
         sql = """
             SELECT de.id, de.day, de.meal, de.food_name, de.quantity_g,
-                   de.bda_food_id, de.notes,
+                   de.bda_food_id, de.notes, de.ora, de.luogo, de.qty_raw,
                    bf.name AS bda_name
             FROM diary_entries de
             LEFT JOIN bda_foods bf ON de.bda_food_id = bf.id
@@ -145,6 +205,13 @@ class Database:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(sql, params)]
 
+    def delete_entries_for_day(self, user_code, day):
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM diary_entries WHERE user_code=? AND day=?",
+                (user_code, int(day)),
+            )
+
     def associate_bda(self, entry_id, bda_food_id):
         with self._conn() as conn:
             conn.execute(
@@ -152,7 +219,7 @@ class Database:
             )
 
     def update_entry(self, entry_id, **kwargs):
-        allowed = {"food_name", "quantity_g", "meal", "day", "notes"}
+        allowed = {"food_name", "quantity_g", "meal", "day", "notes", "ora", "luogo", "qty_raw"}
         fields = [(k, v) for k, v in kwargs.items() if k in allowed]
         if not fields:
             return
@@ -173,6 +240,23 @@ class Database:
                 (user_code,),
             ).fetchone()
         return row["tot"] or 0, row["assoc"] or 0
+
+    # ── Diary day meta ────────────────────────────────────────────────────────
+
+    def set_day_meta(self, user_code, day, date_label):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO diary_day_meta (user_code, day, date_label) VALUES (?,?,?)",
+                (user_code, int(day), date_label),
+            )
+
+    def get_day_meta(self, user_code, day):
+        with self._conn() as conn:
+            r = conn.execute(
+                "SELECT date_label FROM diary_day_meta WHERE user_code=? AND day=?",
+                (user_code, int(day)),
+            ).fetchone()
+        return r["date_label"] if r else ""
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
