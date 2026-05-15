@@ -1048,6 +1048,48 @@ _SKIP_BDA_COLS = {
 }
 
 
+def _compute_user_totals(db: "Database", user_code: str):
+    """Calcola i totali nutrizionali per giorno per un utente.
+
+    Returns:
+        totals  – dict {day: {col_name: float}}
+        missing – dict {day: int}  (voci senza BDA associata)
+    """
+    try:
+        formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
+    except Exception:
+        formulas = {}
+    _default = "val * qty / 100"
+    _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
+    totals = {d: {} for d in DAYS}
+    missing = {d: 0 for d in DAYS}
+
+    entries = db.get_entries(user_code)
+    bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
+    bda_cache = db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
+
+    for e in entries:
+        day = e["day"]
+        if not e["bda_food_id"]:
+            missing[day] += 1
+            continue
+        bda = bda_cache.get(e["bda_food_id"])
+        if not bda:
+            continue
+        qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
+        for col, val in bda.items():
+            if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
+                continue
+            try:
+                formula = formulas.get(col, _default)
+                result = eval(formula, _safe, {"val": float(val), "qty": qty})
+                totals[day][col] = totals[day].get(col, 0.0) + result
+            except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
+                pass
+
+    return totals, missing
+
+
 class NutriSummaryFrame(QWidget):
     """Tab riepilogo: valori nutrizionali calcolati dalla BDA, per giorno."""
 
@@ -1153,35 +1195,8 @@ class NutriSummaryFrame(QWidget):
             self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
 
     def _compute_totals(self):
-        try:
-            formulas = json.loads(self.db.get_setting("nutri_formulas") or "{}")
-        except Exception:
-            formulas = {}
-        _default = "val * qty / 100"
-        _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
-        totals = {d: {} for d in DAYS}
-        missing = {d: 0 for d in DAYS}
-
-        for e in self.db.get_entries(self.user_code):
-            day = e["day"]
-            if not e["bda_food_id"]:
-                missing[day] += 1
-                continue
-            bda = self.db.get_bda_food(e["bda_food_id"])
-            if not bda:
-                continue
-            qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
-            for col, val in bda.items():
-                if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
-                    continue
-                try:
-                    formula = formulas.get(col, _default)
-                    result = eval(formula, _safe, {"val": float(val), "qty": qty})
-                    totals[day][col] = totals[day].get(col, 0.0) + result
-                except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
-                    pass
-
-        return totals, missing
+        assert self.user_code is not None
+        return _compute_user_totals(self.db, self.user_code)
 
 
 class DiaryTab(QWidget):
@@ -1191,6 +1206,7 @@ class DiaryTab(QWidget):
         self.on_change = on_change
         self.current_user = None
         self._users = []
+        self._checked_users: set = set()
         self._build()
 
     def _build(self):
@@ -1212,6 +1228,7 @@ class DiaryTab(QWidget):
         self.user_list = QListWidget()
         self.user_list.setFont(QFont("Courier", 11))
         self.user_list.currentRowChanged.connect(self._on_user_change)
+        self.user_list.itemChanged.connect(self._on_check_changed)
         left_layout.addWidget(self.user_list)
 
         btn_add = QPushButton("+ Aggiungi")
@@ -1233,6 +1250,24 @@ class DiaryTab(QWidget):
         btn_import_ce = QPushButton("Importa Content Export")
         btn_import_ce.clicked.connect(self._import_content_export)
         left_layout.addWidget(btn_import_ce)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        left_layout.addWidget(sep2)
+
+        sel_row = QHBoxLayout()
+        btn_sel_all = QPushButton("Seleziona tutti")
+        btn_sel_all.clicked.connect(lambda: self._set_all_checked(True))
+        sel_row.addWidget(btn_sel_all)
+        btn_desel_all = QPushButton("Deseleziona tutti")
+        btn_desel_all.clicked.connect(lambda: self._set_all_checked(False))
+        sel_row.addWidget(btn_desel_all)
+        left_layout.addLayout(sel_row)
+
+        btn_export = QPushButton("Esporta selezionati")
+        btn_export.clicked.connect(self._export_selected)
+        left_layout.addWidget(btn_export)
 
         splitter.addWidget(left)
 
@@ -1275,7 +1310,12 @@ class DiaryTab(QWidget):
         self.user_list.blockSignals(True)
         self.user_list.clear()
         for u in self._users:
-            self.user_list.addItem(u["code"])
+            from PyQt6.QtWidgets import QListWidgetItem
+            item = QListWidgetItem(u["code"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            state = Qt.CheckState.Checked if u["code"] in self._checked_users else Qt.CheckState.Unchecked
+            item.setCheckState(state)
+            self.user_list.addItem(item)
         if current_code:
             for i, u in enumerate(self._users):
                 if u["code"] == current_code:
@@ -1331,6 +1371,71 @@ class DiaryTab(QWidget):
         self.refresh_users()
         if self.on_change:
             self.on_change()
+
+    def _on_check_changed(self, item):
+        code = item.text()
+        if item.checkState() == Qt.CheckState.Checked:
+            self._checked_users.add(code)
+        else:
+            self._checked_users.discard(code)
+
+    def _set_all_checked(self, checked: bool):
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self.user_list.blockSignals(True)
+        for i in range(self.user_list.count()):
+            item = self.user_list.item(i)
+            if item and not item.isHidden():
+                item.setCheckState(state)
+                code = item.text()
+                if checked:
+                    self._checked_users.add(code)
+                else:
+                    self._checked_users.discard(code)
+        self.user_list.blockSignals(False)
+
+    def _export_selected(self):
+        if not self._checked_users:
+            QMessageBox.information(self, "Esporta", "Nessun utente selezionato.")
+            return
+
+        if self.db.count_bda() == 0:
+            QMessageBox.warning(self, "Esporta", "Nessuna BDA caricata.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Salva esportazione", "riepilogo_nutrizionale.xlsx",
+            "Excel (*.xlsx)",
+        )
+        if not path:
+            return
+
+        nutrient_cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
+
+        rows = []
+        for user_code in sorted(self._checked_users):
+            totals, missing = _compute_user_totals(self.db, user_code)
+            for day in DAYS:
+                day_totals = totals[day]
+                active_cols = [c for c in nutrient_cols if day_totals.get(c, 0.0) != 0.0]
+                if not active_cols and missing[day] == 0:
+                    continue
+                row: dict = {"Utente": user_code, "Giorno": day}
+                for col in nutrient_cols:
+                    val = day_totals.get(col, 0.0)
+                    row[col] = round(val, 4) if val != 0.0 else None
+                row["Voci senza BDA"] = missing[day] if missing[day] else None
+                rows.append(row)
+
+        if not rows:
+            QMessageBox.information(self, "Esporta", "Nessun dato nutrizionale disponibile per gli utenti selezionati.")
+            return
+
+        df = pd.DataFrame(rows)
+        try:
+            df.to_excel(path, index=False)
+            QMessageBox.information(self, "Esporta", f"Esportazione completata:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Errore", f"Impossibile salvare il file:\n{exc}")
 
     def _import_diary(self):
         path, _ = QFileDialog.getOpenFileName(
