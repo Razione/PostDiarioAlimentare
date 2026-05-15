@@ -333,6 +333,116 @@ class PreferencesDialog(QDialog):
         self.accept()
 
 
+class FormulaDialog(QDialog):
+    """Preferenze: formula per il calcolo del riepilogo nutrizionale, per ogni nutriente."""
+
+    _SAFE    = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
+    _DEFAULT = "val * qty / 100"
+
+    def __init__(self, parent, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Preferenze – Formula nutrizionale")
+        self.resize(620, 520)
+        self._build()
+        self._load()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+
+        hint = QLabel(
+            "Variabili: <b>val</b> = valore BDA per 100 g · <b>qty</b> = quantità in grammi\n"
+            "Funzioni: abs · max · min · round · Operatori: + − * / ** ( )"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray;")
+        layout.addWidget(hint)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Cerca:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Filtra nutriente…")
+        self.search_edit.textChanged.connect(self._filter)
+        search_row.addWidget(self.search_edit)
+        layout.addLayout(search_row)
+
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Nutriente", "Formula"])
+        hdr = self.table.horizontalHeader()
+        if hdr:
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setItemDelegateForColumn(1, _SelectAllDelegate(self.table))
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_reset = QPushButton("Reimposta default (selezione)")
+        btn_reset.setToolTip("Reimposta le righe selezionate; senza selezione reimposta tutto.")
+        btn_reset.clicked.connect(self._reset)
+        btn_row.addWidget(btn_reset)
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self._save)
+        btn_ok.setDefault(True)
+        btn_row.addWidget(btn_ok)
+        layout.addLayout(btn_row)
+
+    def _load(self):
+        try:
+            saved = json.loads(self.db.get_setting("nutri_formulas") or "{}")
+        except Exception:
+            saved = {}
+        cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
+        self.table.setRowCount(len(cols))
+        for i, col in enumerate(cols):
+            name_item = QTableWidgetItem(str(col))
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, name_item)
+            self.table.setItem(i, 1, QTableWidgetItem(saved.get(col, self._DEFAULT)))
+
+    def _filter(self, text):
+        q = text.strip().lower()
+        for row in range(self.table.rowCount()):
+            it = self.table.item(row, 0)
+            self.table.setRowHidden(row, bool(q) and (it is None or q not in it.text().lower()))
+
+    def _reset(self):
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        targets = rows if rows else range(self.table.rowCount())
+        for row in targets:
+            it = self.table.item(row, 1)
+            if it:
+                it.setText(self._DEFAULT)
+
+    def _save(self):
+        formulas, errors = {}, []
+        for row in range(self.table.rowCount()):
+            ni = self.table.item(row, 0)
+            fi = self.table.item(row, 1)
+            if ni is None or fi is None:
+                continue
+            col     = ni.text()
+            formula = fi.text().strip() or self._DEFAULT
+            try:
+                eval(formula, self._SAFE, {"val": 1.0, "qty": 100.0})
+            except Exception as exc:
+                errors.append(f"• {col}: {exc}")
+                continue
+            if formula != self._DEFAULT:
+                formulas[col] = formula
+        if errors:
+            QMessageBox.warning(self, "Formule non valide",
+                                "Errori nelle seguenti formule:\n" + "\n".join(errors))
+            return
+        self.db.set_setting("nutri_formulas", json.dumps(formulas, ensure_ascii=False))
+        self.accept()
+
+
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
@@ -423,6 +533,20 @@ def _compute_mnova(nova, bda_data: dict | None, cutoffs: list) -> str:
     return f"{nova}b" if is_b else f"{nova}a"
 
 
+class _SelectAllDelegate(QStyledItemDelegate):
+    """Delegate che seleziona tutto il testo quando si apre l'editor."""
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.setAutoFillBackground(True)
+        return editor
+
+    def setEditorData(self, editor, index):
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            editor.selectAll()
+
+
 class _DayFrameDelegate(QStyledItemDelegate):
     """Delegate per DayFrame: QLineEdit su Qtà, QComboBox su NOVA."""
 
@@ -434,10 +558,14 @@ class _DayFrameDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         col = index.column()
         if col == self._qty_col:
-            return super().createEditor(parent, option, index)
+            editor = super().createEditor(parent, option, index)
+            if isinstance(editor, QLineEdit):
+                editor.setAutoFillBackground(True)
+            return editor
         if col == self._nova_col:
             cb = QComboBox(parent)
             cb.addItems(["—", "1", "2", "3", "4"])
+            cb.setAutoFillBackground(True)
             return cb
         return None
 
@@ -448,6 +576,8 @@ class _DayFrameDelegate(QStyledItemDelegate):
             editor.setCurrentIndex(max(i, 0))
         else:
             super().setEditorData(editor, index)
+            if isinstance(editor, QLineEdit):
+                editor.selectAll()
 
     def setModelData(self, editor, model, index):
         if index.column() == self._nova_col and isinstance(editor, QComboBox) and model:
@@ -1023,6 +1153,12 @@ class NutriSummaryFrame(QWidget):
             self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
 
     def _compute_totals(self):
+        try:
+            formulas = json.loads(self.db.get_setting("nutri_formulas") or "{}")
+        except Exception:
+            formulas = {}
+        _default = "val * qty / 100"
+        _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
         totals = {d: {} for d in DAYS}
         missing = {d: 0 for d in DAYS}
 
@@ -1034,14 +1170,15 @@ class NutriSummaryFrame(QWidget):
             bda = self.db.get_bda_food(e["bda_food_id"])
             if not bda:
                 continue
-            qty = e["quantity_g"] if e["quantity_g"] is not None else 100.0
-            factor = qty / 100.0
+            qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
             for col, val in bda.items():
                 if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
                     continue
                 try:
-                    totals[day][col] = totals[day].get(col, 0.0) + float(val) * factor
-                except (TypeError, ValueError):
+                    formula = formulas.get(col, _default)
+                    result = eval(formula, _safe, {"val": float(val), "qty": qty})
+                    totals[day][col] = totals[day].get(col, 0.0) + result
+                except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
                     pass
 
         return totals, missing
@@ -1395,6 +1532,9 @@ class App(QMainWindow):
         act_mnova = QAction("Cutoff mNOVA…", self)
         act_mnova.triggered.connect(self._open_preferences)
         pref_m.addAction(act_mnova)
+        act_formula = QAction("Formula nutrizionale…", self)
+        act_formula.triggered.connect(self._open_formula)
+        pref_m.addAction(act_formula)
 
         help_m = mb.addMenu("Aiuto")
         act_about = QAction("Informazioni", self)
@@ -1426,6 +1566,11 @@ class App(QMainWindow):
             row = self.diary_tab.user_list.currentRow()
             self.diary_tab._on_user_change(row)
 
+    def _open_formula(self):
+        dlg = FormulaDialog(self, self.db)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.diary_tab.nutri_frame._refresh()
+
     def _about(self):
         QMessageBox.information(
             self, "Informazioni",
@@ -1448,9 +1593,11 @@ if __name__ == "__main__":
         QTableWidget::item:selected         { background: #0078d4; color: white; }
         QTableWidget::item:selected:!active { background: #b8d8f0; color: black; }
         QTableWidget::item:hover            { background: #e5f1fb; color: black; }
-        QTreeWidget QLineEdit               { background: white; color: black;
+        QTreeWidget QLineEdit, QTableWidget QLineEdit
+                                            { background: palette(base); color: palette(text);
                                               selection-background-color: #0078d4;
                                               selection-color: white; }
+        QTreeWidget QComboBox               { background: palette(base); color: palette(text); }
     """)
     window = App()
     window.show()
