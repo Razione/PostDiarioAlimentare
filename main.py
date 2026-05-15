@@ -571,22 +571,23 @@ class DayFrame(QWidget):
         tb.addStretch()
         layout.addLayout(tb)
 
-        # Colonne: 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Qtà(g) 5=Qtà raw 6=BDA 7=Stato 8=Note
-        _QTY_COL = 4
+        # Colonne: 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà raw 6=Qtà(g) 7=BDA 8=Stato
+        _QTY_COL = 5
         self._qty_col = _QTY_COL
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([
-            "Pasto", "Ora", "Luogo", "Alimento (diario)",
-            "Qtà (g)", "Qtà originale", "Alimento BDA", "Stato", "Note",
+            "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
+            "Qtà org.", "Qtà (g)",  "Alimento BDA", "Stato",
         ])
         self.tree.setColumnWidth(0, 120)
         self.tree.setColumnWidth(1, 65)
         self.tree.setColumnWidth(2, 100)
-        self.tree.setColumnWidth(3, 190)
-        self.tree.setColumnWidth(4, 60)
-        self.tree.setColumnWidth(5, 100)
-        self.tree.setColumnWidth(6, 180)
-        self.tree.setColumnWidth(7, 42)
+        self.tree.setColumnWidth(3, 100)
+        self.tree.setColumnWidth(4, 200)
+        self.tree.setColumnWidth(5, 60)
+        self.tree.setColumnWidth(6, 60)
+        self.tree.setColumnWidth(7, 180)
+
         hdr = self.tree.header()
         if hdr:
             hdr.setStretchLastSection(True)
@@ -617,11 +618,11 @@ class DayFrame(QWidget):
                 e.get("ora") or "",
                 e.get("luogo") or "",
                 e["food_name"],
-                _qty_display(e.get("quantity_g")),
+                e.get("notes") or "",
                 e.get("qty_raw") or "",
+                _qty_display(e.get("quantity_g")),
                 e.get("bda_name") or "—",
                 "✓" if e["bda_food_id"] else "—",
-                e.get("notes") or "",
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
@@ -953,7 +954,7 @@ class DiaryTab(QWidget):
         self.current_user = code
         for d, frm in zip(DAYS, self.day_frames):
             frm.load_user(code)
-            date_label = self.db.get_day_meta(code, d)
+            date_label = self.db.get_day_meta(code, d)[:-9]
             tab_title = f"  Giorno {d} – {date_label}  " if date_label else f"  Giorno {d}  "
             self.day_nb.setTabText(d - 1, tab_title)
         self.nutri_frame.load_user(code)
