@@ -1,0 +1,35 @@
+name: Build macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install PyQt6 pandas openpyxl pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller diario_alimentare.spec --clean -y
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS
+          path: dist/DiarioAlimentare/
+          retention-days: 30
