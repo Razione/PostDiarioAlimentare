@@ -3,6 +3,7 @@
 import sys
 
 block_cipher = None
+_is_mac = sys.platform == 'darwin'
 
 a = Analysis(
     ['main.py'],
@@ -31,7 +32,7 @@ a = Analysis(
             ]
         }
     },
-    runtime_hooks=[],
+    runtime_hooks=['rthook_macos.py'] if _is_mac else [],
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -40,8 +41,6 @@ a = Analysis(
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-_is_mac = sys.platform == 'darwin'
 
 exe = EXE(
     pyz,
@@ -70,9 +69,14 @@ if _is_mac:
         name='DiarioAlimentare.app',
         bundle_identifier='it.diarioalimentare.app',
         info_plist={
-            'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': '1.0.0',
+            'CFBundlePackageType': 'APPL',
+            'CFBundleExecutable': 'DiarioAlimentare',
+            'CFBundleIdentifier': 'it.diarioalimentare.app',
             'CFBundleName': 'Diario Alimentare',
+            'CFBundleDisplayName': 'Diario Alimentare',
+            'CFBundleShortVersionString': '1.0.0',
+            'NSPrincipalClass': 'NSApplication',
+            'NSHighResolutionCapable': True,
         },
     )
 else:
