@@ -20,7 +20,17 @@ a = Analysis(
         'pandas.io.formats.excel',
     ],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={
+        "PyQt6": {
+            "qt_plugins": [
+                "platforms",
+                "platforminputcontexts",
+                "styles",
+                "imageformats",
+                "iconengines",
+            ]
+        }
+    },
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
