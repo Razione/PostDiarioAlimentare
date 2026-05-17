@@ -1,43 +1,73 @@
 name: Build macOS
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+ push:
+   tags:
+    - 'v*'
+ workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+ FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
-    runs-on: macos-latest
+ build:
+   runs-on: macos-latest
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+   steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
 
-      - name: Install dependencies
-        run: |
-          pip install PyQt6 pandas openpyxl pyinstaller
+    - name: Install dependencies
+      run: |
+       pip install PyQt6 pandas openpyxl pyinstaller
 
-      - name: Build with PyInstaller
-        run: |
-          python -m PyInstaller diario_alimentare.spec --clean -y
+    - name: Build with PyInstaller
+      run: |
+       python -m PyInstaller diario_alimentare.spec --clean -y
 
-      - name: Zip .app bundle
-        run: |
-          cd dist
-          zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
+    - name: Sign app bundle (ad-hoc)
+      run: |
+       APP="dist/DiarioAlimentare.app"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DiarioAlimentare-macOS
-          path: dist/DiarioAlimentare-macOS.zip
-          retention-days: 30
+       # Sign extensions and dylibs first
+       find "$APP" -name "*.so" -exec codesign --force --sign - {} \;
+       find "$APP" -name "*.dylib" -exec codesign --force --sign - {} \;
+
+       # Remove static stub libraries that block framework signing
+       find "$APP" -name "*.a" -delete
+
+       # Sign frameworks inside-out
+       find "$APP" -name "*.framework" -type d | sort -r | while read f; do
+         codesign --force --sign - "$f"
+       done
+
+       # Sign all Mach-O binaries in MacOS/
+       find "$APP/Contents/MacOS/" -type f | while read f; do
+         file "$f" | grep -q "Mach-O" && codesign --force --sign - "$f" || true
+       done
+
+       # Sign the app bundle
+       codesign --force --sign - "$APP"
+
+       # Verify
+       codesign --verify --deep --strict "$APP"
+
+    - name: Zip .app bundle
+      run: |
+       cd dist
+       zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DiarioAlimentare-macOS
+        path: dist/DiarioAlimentare-macOS.zip
+        retention-days: 30
+
+
+

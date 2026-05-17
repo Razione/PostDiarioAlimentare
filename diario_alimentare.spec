@@ -31,6 +31,8 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+_is_mac = sys.platform == 'darwin'
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -40,7 +42,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=not _is_mac,        # UPX corrompe i binari macOS
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -49,7 +51,7 @@ exe = EXE(
     entitlements_file=None,
 )
 
-if sys.platform == 'darwin':
+if _is_mac:
     app = BUNDLE(
         exe,
         a.binaries,
