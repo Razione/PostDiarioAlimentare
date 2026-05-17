@@ -34,28 +34,14 @@ jobs:
       run: |
        APP="dist/DiarioAlimentare.app"
 
-       # Sign extensions and dylibs first
-       find "$APP" -name "*.so" -exec codesign --force --sign - {} \;
-       find "$APP" -name "*.dylib" -exec codesign --force --sign - {} \;
-
-       # Remove static stub libraries that block framework signing
+       # Remove static stub libraries that conflict with signing
        find "$APP" -name "*.a" -delete
 
-       # Sign frameworks inside-out
-       find "$APP" -name "*.framework" -type d | sort -r | while read f; do
-         codesign --force --sign - "$f"
-       done
-
-       # Sign all Mach-O binaries in MacOS/
-       find "$APP/Contents/MacOS/" -type f | while read f; do
-         file "$f" | grep -q "Mach-O" && codesign --force --sign - "$f" || true
-       done
-
-       # Sign the app bundle
-       codesign --force --sign - "$APP"
+       # Ad-hoc deep sign (inside-out, single pass)
+       codesign --force --deep --sign - "$APP"
 
        # Verify
-       codesign --verify --deep --strict "$APP"
+       codesign --verify --deep "$APP"
 
     - name: Zip .app bundle
       run: |
