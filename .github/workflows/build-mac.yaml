@@ -58,6 +58,12 @@ jobs:
     name: Combine architectures and optionally sign/notarize
     needs: build
     runs-on: macos-latest
+    env:
+      CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
+      CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
     steps:
       - name: Download x86_64 artifact
         uses: actions/download-artifact@v4
@@ -111,10 +117,10 @@ jobs:
 
       - name: Import signing certificate (p12) into temporary keychain
         id: import-cert
-        if: ${{ secrets.CERTIFICATE_P12 && secrets.CERT_PASSWORD }}
+        if: ${{ env.CERTIFICATE_P12 != '' && env.CERT_PASSWORD != '' }}
         env:
-          P12_B64: ${{ secrets.CERTIFICATE_P12 }}
-          P12_PASS: ${{ secrets.CERT_PASSWORD }}
+          P12_B64: ${{ env.CERTIFICATE_P12 }}
+          P12_PASS: ${{ env.CERT_PASSWORD }}
         run: |
           set -e
           echo "$P12_B64" | base64 --decode > cert.p12
@@ -130,9 +136,9 @@ jobs:
           echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
 
       - name: Codesign (use imported identity or secret)
-        if: ${{ secrets.CODESIGN_IDENTITY || secrets.CERTIFICATE_P12 }}
+        if: ${{ env.CODESIGN_IDENTITY != '' || env.CERTIFICATE_P12 != '' }}
         env:
-          SECRET_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          SECRET_IDENTITY: ${{ env.CODESIGN_IDENTITY }}
         run: |
           APP="dist/DiarioAlimentare.app"
           # prefer identity extracted from imported keychain
@@ -152,10 +158,10 @@ jobs:
           codesign --verify --deep "$APP"
 
       - name: Notarize (if Apple credentials provided)
-        if: ${{ secrets.APPLE_ID && secrets.APPLE_PASSWORD }}
+        if: ${{ env.APPLE_ID != '' && env.APPLE_PASSWORD != '' }}
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_ID: ${{ env.APPLE_ID }}
+          APPLE_PASSWORD: ${{ env.APPLE_PASSWORD }}
         run: |
           APP="dist/DiarioAlimentare.app"
           ZIP=dist/DiarioAlimentare-macOS-notarize.zip
@@ -170,7 +176,7 @@ jobs:
           zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
 
       - name: Cleanup temporary keychain
-        if: ${{ secrets.CERTIFICATE_P12 && secrets.CERT_PASSWORD }}
+        if: ${{ env.CERTIFICATE_P12 != '' && env.CERT_PASSWORD != '' }}
         run: |
           KEYCHAIN=build.keychain
           security delete-keychain "$KEYCHAIN" || true
