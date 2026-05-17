@@ -1,59 +1,186 @@
 name: Build macOS
 
 on:
- push:
-   tags:
-    - 'v*'
- workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 env:
- FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
- build:
-   runs-on: macos-latest
+  build:
+    name: Build per arch
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-latest
+          - arch: arm64
+            runner: macos-latest
 
-   steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-       pip install PyQt6 pandas openpyxl pyinstaller
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install PyQt6 pandas openpyxl pyinstaller
 
-    - name: Build with PyInstaller
-      run: |
-       python -m PyInstaller diario_alimentare.spec --clean -y
+      - name: Build with PyInstaller
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          echo "Building for $TARGET_ARCH"
+          python -m PyInstaller diario_alimentare.spec --clean -y
 
-    - name: Sign app bundle (ad-hoc)
-      run: |
-       APP="dist/DiarioAlimentare.app"
+      - name: Prepare artifact
+        run: |
+          cd dist
+          zip -r DiarioAlimentare-macOS-${{ matrix.arch }}.zip DiarioAlimentare.app
 
-       # Remove static stub libraries that conflict with signing
-       find "$APP" -name "*.a" -delete
+      - name: Upload artifact per-arch
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS-${{ matrix.arch }}
+          path: dist/DiarioAlimentare-macOS-${{ matrix.arch }}.zip
+          retention-days: 30
 
-       # Ad-hoc deep sign (inside-out, single pass)
-       codesign --force --deep --sign - "$APP"
+  combine:
+    name: Combine architectures and optionally sign/notarize
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS-x86_64
+          path: artifacts/x86_64
 
-       # Verify
-       codesign --verify --deep "$APP"
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS-arm64
+          path: artifacts/arm64
 
-    - name: Zip .app bundle
-      run: |
-       cd dist
-       zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
+      - name: Unzip artifacts
+        run: |
+          unzip -o artifacts/x86_64/DiarioAlimentare-macOS-x86_64.zip -d out/x86_64 || true
+          unzip -o artifacts/arm64/DiarioAlimentare-macOS-arm64.zip -d out/arm64 || true
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: DiarioAlimentare-macOS
-        path: dist/DiarioAlimentare-macOS.zip
-        retention-days: 30
+      - name: Create universal app (if both builds present)
+        run: |
+          set -e
+          APP_OUT=out
+          APP_X86="$PWD/out/x86_64/DiarioAlimentare.app"
+          APP_ARM="$PWD/out/arm64/DiarioAlimentare.app"
+          DEST="$PWD/dist/DiarioAlimentare.app"
+
+          if [ -d "$APP_X86" ] && [ -d "$APP_ARM" ]; then
+            mkdir -p "$DEST"
+            cp -R "$APP_X86" "$DEST"
+
+            # find executable name
+            EXEC_NAME=$(ls "$DEST/Contents/MacOS" | head -n1)
+            echo "Executable: $EXEC_NAME"
+
+            lipo -create \
+              "$APP_X86/Contents/MacOS/$EXEC_NAME" \
+              "$APP_ARM/Contents/MacOS/$EXEC_NAME" \
+              -output "$DEST/Contents/MacOS/$EXEC_NAME" || true
+
+            echo "Created universal app at $DEST"
+          else
+            echo "One or both architecture builds missing; copying any available build."
+            if [ -d "$APP_ARM" ]; then cp -R "$APP_ARM" "$DEST"; fi
+            if [ -d "$APP_X86" ]; then cp -R "$APP_X86" "$DEST"; fi
+          fi
+
+      - name: Remove static libs that break signing
+        run: |
+          APP="dist/DiarioAlimentare.app"
+          find "$APP" -name "*.a" -delete || true
+
+      - name: Import signing certificate (p12) into temporary keychain
+        id: import-cert
+        if: ${{ secrets.CERTIFICATE_P12 && secrets.CERT_PASSWORD }}
+        env:
+          P12_B64: ${{ secrets.CERTIFICATE_P12 }}
+          P12_PASS: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          set -e
+          echo "$P12_B64" | base64 --decode > cert.p12
+          KEYCHAIN=build.keychain
+          security create-keychain -p "$P12_PASS" "$KEYCHAIN" || true
+          security import cert.p12 -k "$KEYCHAIN" -P "$P12_PASS" -T /usr/bin/codesign -T /usr/bin/security || true
+          security list-keychains -s "$KEYCHAIN"
+          security unlock-keychain -p "$P12_PASS" "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool: -s -k "$P12_PASS" "$KEYCHAIN" || true
+
+          # extract first codesigning identity common name
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F '"' '/"/ {print $2; exit}' || true)
+          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+
+      - name: Codesign (use imported identity or secret)
+        if: ${{ secrets.CODESIGN_IDENTITY || secrets.CERTIFICATE_P12 }}
+        env:
+          SECRET_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        run: |
+          APP="dist/DiarioAlimentare.app"
+          # prefer identity extracted from imported keychain
+          IMPORTED_IDENTITY="${{ steps.import-cert.outputs.identity }}"
+          IDENTITY="$IMPORTED_IDENTITY"
+          if [ -z "$IDENTITY" ]; then
+            IDENTITY="$SECRET_IDENTITY"
+          fi
+
+          if [ -z "$IDENTITY" ]; then
+            echo "No codesign identity available; skipping codesign"
+            exit 0
+          fi
+
+          echo "Using identity: $IDENTITY"
+          codesign --force --deep --options runtime --entitlements /dev/null --sign "$IDENTITY" "$APP"
+          codesign --verify --deep "$APP"
+
+      - name: Notarize (if Apple credentials provided)
+        if: ${{ secrets.APPLE_ID && secrets.APPLE_PASSWORD }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          APP="dist/DiarioAlimentare.app"
+          ZIP=dist/DiarioAlimentare-macOS-notarize.zip
+          cd dist
+          zip -r "$ZIP" DiarioAlimentare.app
+          xcrun notarytool submit "$ZIP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --wait || exit 1
+          xcrun stapler staple "$APP" || true
+
+      - name: Zip final .app
+        run: |
+          cd dist
+          zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
+
+      - name: Cleanup temporary keychain
+        if: ${{ secrets.CERTIFICATE_P12 && secrets.CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=build.keychain
+          security delete-keychain "$KEYCHAIN" || true
+
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS-final
+          path: dist/DiarioAlimentare-macOS-universal.zip
+          retention-days: 30
 
 
 
