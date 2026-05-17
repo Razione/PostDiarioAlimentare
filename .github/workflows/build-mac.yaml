@@ -30,9 +30,14 @@ jobs:
         run: |
           python -m PyInstaller diario_alimentare.spec --clean -y
 
+      - name: Zip .app bundle
+        run: |
+          cd dist
+          zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DiarioAlimentare-macOS
-          path: dist/DiarioAlimentare/
+          path: dist/DiarioAlimentare-macOS.zip
           retention-days: 30

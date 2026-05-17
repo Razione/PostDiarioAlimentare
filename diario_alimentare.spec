@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+
 block_cipher = None
 
 a = Analysis(
@@ -39,7 +41,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,          # nessuna finestra console
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -47,13 +49,28 @@ exe = EXE(
     entitlements_file=None,
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='DiarioAlimentare',
-)
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name='DiarioAlimentare.app',
+        bundle_identifier='it.diarioalimentare.app',
+        info_plist={
+            'NSHighResolutionCapable': True,
+            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleName': 'Diario Alimentare',
+        },
+    )
+else:
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='DiarioAlimentare',
+    )
