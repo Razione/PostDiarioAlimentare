@@ -173,8 +173,12 @@ jobs:
 
       - name: Zip final .app
         run: |
-          cd dist
-          zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
+          if [ -d "dist/DiarioAlimentare.app" ]; then
+            cd dist
+            zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
+          else
+            echo "dist/DiarioAlimentare.app not found, skipping zip"
+          fi
 
       - name: Cleanup temporary keychain
         if: ${{ env.CERTIFICATE_P12 != '' && env.CERT_PASSWORD != '' }}
