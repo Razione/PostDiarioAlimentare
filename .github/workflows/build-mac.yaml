@@ -11,15 +11,15 @@ env:
 
 jobs:
   build:
-    name: Build per arch
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            runner: macos-latest
-          - arch: arm64
-            runner: macos-latest
+    name: Build macOS app
+    runs-on: macos-26
+
+    env:
+      CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
+      CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -36,82 +36,8 @@ jobs:
           pip install PyQt6 pandas openpyxl pyinstaller
 
       - name: Build with PyInstaller
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          echo "Building for $TARGET_ARCH"
           python -m PyInstaller diario_alimentare.spec --clean -y
-
-      - name: Prepare artifact
-        run: |
-          cd dist
-          zip -r DiarioAlimentare-macOS-${{ matrix.arch }}.zip DiarioAlimentare.app
-
-      - name: Upload artifact per-arch
-        uses: actions/upload-artifact@v4
-        with:
-          name: DiarioAlimentare-macOS-${{ matrix.arch }}
-          path: dist/DiarioAlimentare-macOS-${{ matrix.arch }}.zip
-          retention-days: 30
-
-  combine:
-    name: Combine architectures and optionally sign/notarize
-    needs: build
-    runs-on: macos-latest
-    env:
-      CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
-      CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
-      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-    steps:
-      - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: DiarioAlimentare-macOS-x86_64
-          path: artifacts/x86_64
-
-      - name: Download arm64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: DiarioAlimentare-macOS-arm64
-          path: artifacts/arm64
-
-      - name: Unzip artifacts
-        run: |
-          mkdir -p out/x86_64 out/arm64
-          unzip -o artifacts/x86_64/DiarioAlimentare-macOS-x86_64.zip -d out/x86_64 || true
-          unzip -o artifacts/arm64/DiarioAlimentare-macOS-arm64.zip -d out/arm64 || true
-
-      - name: Create universal app (if both builds present)
-        run: |
-          set -e
-          APP_OUT=out
-          APP_X86="$PWD/out/x86_64/DiarioAlimentare.app"
-          APP_ARM="$PWD/out/arm64/DiarioAlimentare.app"
-          DEST_DIR="$PWD/dist"
-          DEST="$DEST_DIR/DiarioAlimentare.app"
-
-          mkdir -p "$DEST_DIR"
-
-          if [ -d "$APP_X86" ] && [ -d "$APP_ARM" ]; then
-            cp -R "$APP_X86" "$DEST_DIR"
-
-            # find executable name
-            EXEC_NAME=$(ls "$DEST/Contents/MacOS" | head -n1)
-            echo "Executable: $EXEC_NAME"
-
-            lipo -create \
-              "$APP_X86/Contents/MacOS/$EXEC_NAME" \
-              "$APP_ARM/Contents/MacOS/$EXEC_NAME" \
-              -output "$DEST/Contents/MacOS/$EXEC_NAME" || true
-
-            echo "Created universal app at $DEST"
-          else
-            echo "One or both architecture builds missing; copying any available build."
-            if [ -d "$APP_ARM" ]; then cp -R "$APP_ARM" "$DEST_DIR"; fi
-            if [ -d "$APP_X86" ]; then cp -R "$APP_X86" "$DEST_DIR"; fi
-          fi
 
       - name: Remove static libs that break signing
         run: |
@@ -144,7 +70,6 @@ jobs:
           SECRET_IDENTITY: ${{ env.CODESIGN_IDENTITY }}
         run: |
           APP="dist/DiarioAlimentare.app"
-          # prefer identity extracted from imported keychain
           IMPORTED_IDENTITY="${{ steps.import-cert.outputs.identity }}"
           IDENTITY="$IMPORTED_IDENTITY"
           if [ -z "$IDENTITY" ]; then
@@ -167,10 +92,9 @@ jobs:
           APPLE_PASSWORD: ${{ env.APPLE_PASSWORD }}
         run: |
           APP="dist/DiarioAlimentare.app"
-          ZIP=dist/DiarioAlimentare-macOS-notarize.zip
           cd dist
-          zip -r "$ZIP" DiarioAlimentare.app
-          xcrun notarytool submit "$ZIP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --wait || exit 1
+          zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
+          xcrun notarytool submit DiarioAlimentare-macOS.zip --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --wait || exit 1
           xcrun stapler staple "$APP" || true
 
       - name: Zip final .app
@@ -178,24 +102,18 @@ jobs:
         run: |
           if [ -d "dist/DiarioAlimentare.app" ]; then
             cd dist
-            zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
+            zip -r DiarioAlimentare-macOS.zip DiarioAlimentare.app
             echo "artifact_exists=true" >> $GITHUB_OUTPUT
           else
             echo "artifact_exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Cleanup temporary keychain
-        if: ${{ env.CERTIFICATE_P12 != '' && env.CERT_PASSWORD != '' }}
-        run: |
-          KEYCHAIN=build.keychain
-          security delete-keychain "$KEYCHAIN" || true
-
       - name: Upload final artifact
         if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: DiarioAlimentare-macOS-final
-          path: dist/DiarioAlimentare-macOS-universal.zip
+          name: DiarioAlimentare-macOS
+          path: dist/DiarioAlimentare-macOS.zip
           retention-days: 30
 
 
