@@ -1,0 +1,20 @@
+# Build artifacts
+dist/
+build/
+*.spec.bak
+
+# GitHub Actions downloaded artifacts
+.gh-artifacts/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Database (user data, not source)
+food_diary.db
+*.db
+
+# macOS
+.DS_Store
