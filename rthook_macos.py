@@ -5,8 +5,8 @@ if sys.platform == 'darwin':
         import ctypes
         from ctypes.util import find_library
 
-        objc = ctypes.CDLL(find_library('objc'))
-        ctypes.CDLL(find_library('AppKit'))
+        objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
+        ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
 
         objc.objc_getClass.restype = ctypes.c_void_p
         objc.objc_getClass.argtypes = [ctypes.c_char_p]

@@ -39,6 +39,28 @@ jobs:
         run: |
           python -m PyInstaller diario_alimentare.spec --clean -y
 
+      - name: Inspect Qt plugins in .app
+        if: ${{ always() }}
+        run: |
+          APP="dist/DiarioAlimentare.app"
+          echo "Inspecting $APP"
+          if [ -d "$APP" ]; then
+            echo "Contents:"
+            ls -la "$APP/Contents" || true
+            echo "Frameworks:"
+            ls -la "$APP/Contents/Frameworks" || true
+            echo "PlugIns:"
+            ls -la "$APP/Contents/PlugIns" || true
+            echo "Resources:"
+            ls -la "$APP/Contents/Resources" || true
+            echo "Recursive plugin files and types:"
+            find "$APP/Contents/PlugIns" -type f -maxdepth 4 -print -exec file {} \; || true
+            echo "Searching for permission/qdarwin files:"
+            find "$APP" \( -iname "*permission*" -o -iname "*qdarwin*" \) -print || true
+          else
+            echo "$APP not found"
+          fi
+
       - name: Remove static libs that break signing
         run: |
           APP="dist/DiarioAlimentare.app"
