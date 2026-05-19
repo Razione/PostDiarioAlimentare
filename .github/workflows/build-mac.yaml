@@ -79,6 +79,7 @@ jobs:
 
       - name: Unzip artifacts
         run: |
+          mkdir -p out/x86_64 out/arm64
           unzip -o artifacts/x86_64/DiarioAlimentare-macOS-x86_64.zip -d out/x86_64 || true
           unzip -o artifacts/arm64/DiarioAlimentare-macOS-arm64.zip -d out/arm64 || true
 
@@ -88,12 +89,13 @@ jobs:
           APP_OUT=out
           APP_X86="$PWD/out/x86_64/DiarioAlimentare.app"
           APP_ARM="$PWD/out/arm64/DiarioAlimentare.app"
-          DEST="$PWD/dist/DiarioAlimentare.app"
+          DEST_DIR="$PWD/dist"
+          DEST="$DEST_DIR/DiarioAlimentare.app"
+
+          mkdir -p "$DEST_DIR"
 
           if [ -d "$APP_X86" ] && [ -d "$APP_ARM" ]; then
-            mkdir -p "$PWD/dist"
-            mkdir -p "$DEST"
-            cp -R "$APP_X86" "$DEST"
+            cp -R "$APP_X86" "$DEST_DIR"
 
             # find executable name
             EXEC_NAME=$(ls "$DEST/Contents/MacOS" | head -n1)
@@ -107,8 +109,8 @@ jobs:
             echo "Created universal app at $DEST"
           else
             echo "One or both architecture builds missing; copying any available build."
-            if [ -d "$APP_ARM" ]; then cp -R "$APP_ARM" "$DEST"; fi
-            if [ -d "$APP_X86" ]; then cp -R "$APP_X86" "$DEST"; fi
+            if [ -d "$APP_ARM" ]; then cp -R "$APP_ARM" "$DEST_DIR"; fi
+            if [ -d "$APP_X86" ]; then cp -R "$APP_X86" "$DEST_DIR"; fi
           fi
 
       - name: Remove static libs that break signing
@@ -172,12 +174,14 @@ jobs:
           xcrun stapler staple "$APP" || true
 
       - name: Zip final .app
+        id: zip-final
         run: |
           if [ -d "dist/DiarioAlimentare.app" ]; then
             cd dist
             zip -r DiarioAlimentare-macOS-universal.zip DiarioAlimentare.app
+            echo "artifact_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "dist/DiarioAlimentare.app not found, skipping zip"
+            echo "artifact_exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Cleanup temporary keychain
@@ -187,6 +191,7 @@ jobs:
           security delete-keychain "$KEYCHAIN" || true
 
       - name: Upload final artifact
+        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: DiarioAlimentare-macOS-final
