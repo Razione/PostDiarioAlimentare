@@ -78,10 +78,26 @@ jobs:
           LOGDIR=logs
           ARCHIVE=qt_plugins_logs.tar.gz
           rm -f "$ARCHIVE"
+          rm -rf "$LOGDIR"
           mkdir -p "$LOGDIR"
           if [ -d "$APP" ]; then
-            echo "Running $APP with QT_DEBUG_PLUGINS=1"
-            QT_DEBUG_PLUGINS=1 "$APP/Contents/MacOS/DiarioAlimentare" > "$LOGDIR/qt_plugins_stdout.log" 2> "$LOGDIR/qt_plugins_stderr.log" || true
+            echo "Running $APP with QT_DEBUG_PLUGINS=1 in background"
+            QT_DEBUG_PLUGINS=1 "$APP/Contents/MacOS/DiarioAlimentare" > "$LOGDIR/qt_plugins_stdout.log" 2> "$LOGDIR/qt_plugins_stderr.log" &
+            APP_PID=$!
+            echo "App PID: $APP_PID"
+            sleep 10
+            if ps -p "$APP_PID" > /dev/null; then
+              echo "App still running after timeout; sending TERM"
+              kill "$APP_PID" || true
+              sleep 5
+            fi
+            if ps -p "$APP_PID" > /dev/null; then
+              echo "App still running after TERM; sending KILL"
+              kill -9 "$APP_PID" || true
+              sleep 2
+            fi
+            echo "Process status after shutdown attempt:"
+            ps -p "$APP_PID" || true
             echo "Collecting plugin files list"
             find "$APP/Contents/PlugIns" -type f -maxdepth 4 -print > "$LOGDIR/plugins_list.txt" || true
             tar -czf "$ARCHIVE" -C "$LOGDIR" . || true
@@ -174,6 +190,7 @@ jobs:
           name: DiarioAlimentare-macOS
           path: dist/DiarioAlimentare-macOS.zip
           retention-days: 30
+
 
 
 
