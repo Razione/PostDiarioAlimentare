@@ -35,6 +35,16 @@ jobs:
           pip install --upgrade pip
           pip install PyQt6 pandas openpyxl pyinstaller
 
+      - name: Show PyQt6 plugin path on runner
+        run: |
+          python - <<'PY'
+          try:
+              from PyQt6 import QtCore
+              print('QLibrary plugins path (runner):', QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.LibraryPath.PluginsPath))
+          except Exception as e:
+              print('Error printing QLibraryInfo path:', e)
+          PY
+
       - name: Build with PyInstaller
         run: |
           python -m PyInstaller diario_alimentare.spec --clean -y
@@ -60,6 +70,33 @@ jobs:
           else
             echo "$APP not found"
           fi
+
+      - name: Run packaged app with QT_DEBUG_PLUGINS and upload logs
+        if: ${{ always() }}
+        run: |
+          APP="dist/DiarioAlimentare.app"
+          LOGDIR=logs
+          ARCHIVE=qt_plugins_logs.tar.gz
+          rm -f "$ARCHIVE"
+          mkdir -p "$LOGDIR"
+          if [ -d "$APP" ]; then
+            echo "Running $APP with QT_DEBUG_PLUGINS=1"
+            QT_DEBUG_PLUGINS=1 "$APP/Contents/MacOS/DiarioAlimentare" > "$LOGDIR/qt_plugins_stdout.log" 2> "$LOGDIR/qt_plugins_stderr.log" || true
+            echo "Collecting plugin files list"
+            find "$APP/Contents/PlugIns" -type f -maxdepth 4 -print > "$LOGDIR/plugins_list.txt" || true
+            tar -czf "$ARCHIVE" -C "$LOGDIR" . || true
+            ls -la "$ARCHIVE" || true
+          else
+            echo "$APP not found; skipping run"
+          fi
+
+      - name: Upload QT plugin logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-qt-plugin-logs
+          path: qt_plugins_logs.tar.gz
+          retention-days: 7
 
       - name: Remove static libs that break signing
         run: |
