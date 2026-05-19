@@ -91,6 +91,7 @@ jobs:
           DEST="$PWD/dist/DiarioAlimentare.app"
 
           if [ -d "$APP_X86" ] && [ -d "$APP_ARM" ]; then
+            mkdir -p "$PWD/dist"
             mkdir -p "$DEST"
             cp -R "$APP_X86" "$DEST"
 
