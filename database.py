@@ -3,8 +3,23 @@
 import sqlite3
 import json
 import contextlib
+import os
+import pathlib
+import sys
 
-DB_FILE = "food_diary.db"
+
+def _default_db_path() -> str:
+    if sys.platform == "darwin":
+        base = pathlib.Path.home() / "Library" / "Application Support" / "DiarioAlimentare"
+    elif sys.platform == "win32":
+        base = pathlib.Path(os.environ.get("APPDATA", pathlib.Path.home())) / "DiarioAlimentare"
+    else:
+        base = pathlib.Path.home() / ".diario_alimentare"
+    base.mkdir(parents=True, exist_ok=True)
+    return str(base / "food_diary.db")
+
+
+DB_FILE = _default_db_path()
 
 
 class Database:
