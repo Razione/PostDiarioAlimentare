@@ -38,10 +38,9 @@ jobs:
       - name: Show PyQt6 version and plugin path on runner
         run: |
           python - <<'PY'
-          import PyQt6
-          print('PyQt6 version:', PyQt6.QtCore.PYQT_VERSION_STR)
           try:
               from PyQt6 import QtCore
+              print('PyQt6 version:', QtCore.PYQT_VERSION_STR)
               print('Qt version:', QtCore.QT_VERSION_STR)
               print('QLibrary plugins path (runner):', QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.LibraryPath.PluginsPath))
           except Exception as e:
