@@ -1691,8 +1691,19 @@ class App(QMainWindow):
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyleSheet("""
+    import traceback
+    import pathlib
+
+    _log = pathlib.Path.home() / "DiarioAlimentare_crash.log"
+
+    try:
+        app = QApplication(sys.argv)
+    except Exception:
+        _log.write_text(traceback.format_exc())
+        sys.exit(1)
+
+    try:
+        app.setStyleSheet("""
         QTreeWidget::item:selected          { background: #0078d4; color: white; }
         QTreeWidget::item:selected:!active  { background: #b8d8f0; color: black; }
         QTreeWidget::item:hover             { background: #e5f1fb; color: black; }
@@ -1708,6 +1719,17 @@ if __name__ == "__main__":
                                               selection-color: white; }
         QTreeWidget QComboBox               { background: palette(base); color: palette(text); }
     """)
-    window = App()
-    window.show()
-    sys.exit(app.exec())
+        window = App()
+        window.show()
+        sys.exit(app.exec())
+    except Exception:
+        err = traceback.format_exc()
+        try:
+            _log.write_text(err)
+        except Exception:
+            pass
+        try:
+            QMessageBox.critical(None, "Errore di avvio", err)
+        except Exception:
+            pass
+        sys.exit(1)
