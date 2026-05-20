@@ -28,21 +28,24 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install PyQt6 pandas openpyxl pyinstaller
+          pip install "PyQt6==6.4.2" pandas openpyxl pyinstaller
 
-      - name: Show PyQt6 plugin path on runner
+      - name: Show PyQt6 version and plugin path on runner
         run: |
           python - <<'PY'
+          import PyQt6
+          print('PyQt6 version:', PyQt6.QtCore.PYQT_VERSION_STR)
           try:
               from PyQt6 import QtCore
+              print('Qt version:', QtCore.QT_VERSION_STR)
               print('QLibrary plugins path (runner):', QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.LibraryPath.PluginsPath))
           except Exception as e:
-              print('Error printing QLibraryInfo path:', e)
+              print('Error:', e)
           PY
 
       - name: Build with PyInstaller

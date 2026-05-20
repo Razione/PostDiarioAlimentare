@@ -29,7 +29,6 @@ a = Analysis(
                 "styles",
                 "imageformats",
                 "iconengines",
-                "permissions",
             ]
         }
     },
