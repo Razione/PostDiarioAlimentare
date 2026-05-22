@@ -32,7 +32,7 @@ a = Analysis(
             ]
         }
     },
-    runtime_hooks=['rthook_macos.py'] if _is_mac else [],
+    runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
