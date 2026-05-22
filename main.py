@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem,
     QGroupBox, QFrame, QSplitter, QFileDialog, QInputDialog,
     QMessageBox, QHeaderView, QAbstractItemView, QStyledItemDelegate,
-    QListWidgetItem,
+    QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QAction
@@ -64,7 +64,7 @@ class BDASearchDialog(QDialog):
     def __init__(self, parent, db: Database):
         super().__init__(parent)
         self.db = db
-        self.result = None
+        self.value = None
 
         self.setWindowTitle("Cerca alimento BDA")
         self.resize(720, 480)
@@ -115,18 +115,18 @@ class BDASearchDialog(QDialog):
         if not items:
             return
         item = items[0]
-        self.result = (item.data(0, Qt.ItemDataRole.UserRole), item.text(0))
+        self.value = (item.data(0, Qt.ItemDataRole.UserRole), item.text(0))
         self.accept()
 
     def _clear(self):
-        self.result = (None, None)
+        self.value = (None, None)
         self.accept()
 
 
 class AddEditEntryDialog(QDialog):
     def __init__(self, parent, entry=None, default_day=1):
         super().__init__(parent)
-        self.result = None
+        self.value = None
         editing = entry is not None
 
         self.setWindowTitle("Modifica voce" if editing else "Nuova voce")
@@ -187,7 +187,7 @@ class AddEditEntryDialog(QDialog):
             except ValueError:
                 QMessageBox.warning(self, "Attenzione", "Quantità non valida.")
                 return
-        self.result = {
+        self.value = {
             "food_name": name,
             "quantity_g": qty,
             "meal": self.meal_combo.currentText(),
@@ -200,7 +200,7 @@ class AddEditEntryDialog(QDialog):
 class BDAImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
-        self.result = None
+        self.value = None
 
         self.setWindowTitle("Configura importazione BDA")
         self.setFixedSize(440, 180)
@@ -236,7 +236,7 @@ class BDAImportDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _ok(self):
-        self.result = self.name_combo.currentText()
+        self.value = self.name_combo.currentText()
         self.accept()
 
 
@@ -447,7 +447,7 @@ class FormulaDialog(QDialog):
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
-        self.result = None
+        self.value = None
 
         self.setWindowTitle("Importa diario – mappa colonne")
         self.setFixedSize(460, 320)
@@ -497,7 +497,7 @@ class DiaryImportDialog(QDialog):
                 QMessageBox.warning(self, "Attenzione", f"Il campo '{key}' è obbligatorio.")
                 return
             mapping[key] = val or None
-        self.result = mapping
+        self.value = mapping
         self.accept()
 
 
@@ -646,12 +646,17 @@ class BDATab(QWidget):
         if name_col not in df.columns:
             # Formato non standard: chiedi all'utente
             dlg = BDAImportDialog(self, df)
-            if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+            if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.value:
                 return
-            name_col = dlg.result
+            name_col = dlg.value
+
+        total = len(df)
+        progress = QProgressDialog("Lettura BDA in corso…", None, 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
 
         records = []
-        for _, row in df.iterrows():
+        for i, (_, row) in enumerate(df.iterrows()):
             name = str(row[name_col]).strip()
             if not name or name.lower() == "nan":
                 continue
@@ -670,14 +675,23 @@ class BDATab(QWidget):
                 except (TypeError, ValueError):
                     data[col] = str(val)
             records.append({"name": name, "data": data})
+            if i % 100 == 0:
+                progress.setValue(i)
+                QApplication.processEvents()
+
+        progress.setValue(total)
 
         if not records:
             QMessageBox.warning(self, "Attenzione", "Nessun alimento trovato nel file.")
             return
 
+        progress.setLabelText("Salvataggio nel database…")
+        progress.setRange(0, 0)
+        QApplication.processEvents()
         self.db.import_bda(records)
         self.db.set_setting("bda_path", path)
         self._refresh_view()
+        progress.reset()
         QMessageBox.information(
             self, "BDA caricata",
             f"Importati {len(records):,} alimenti dal foglio '{bda_sheet}'.",
@@ -944,9 +958,9 @@ class DayFrame(QWidget):
             QMessageBox.warning(self, "Attenzione", "Seleziona prima un utente.")
             return
         dlg = AddEditEntryDialog(self, default_day=self.day)
-        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.value:
             return
-        r = dlg.result
+        r = dlg.value
         self.db.add_entry(self.user_code, r["day"], r["meal"], r["food_name"], r["quantity_g"], r["notes"])
         self._refresh()
 
@@ -961,9 +975,9 @@ class DayFrame(QWidget):
         if not entry:
             return
         dlg = AddEditEntryDialog(self, entry=entry)
-        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.value:
             return
-        r = dlg.result
+        r = dlg.value
         self.db.update_entry(eid, food_name=r["food_name"], quantity_g=r["quantity_g"],
                              meal=r["meal"], day=r["day"], notes=r["notes"])
         self._refresh()
@@ -986,8 +1000,8 @@ class DayFrame(QWidget):
             QMessageBox.warning(self, "Attenzione", "Carica prima la BDA dalla scheda 'BDA'.")
             return
         dlg = BDASearchDialog(self, self.db)
-        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result is not None:
-            bda_id, _ = dlg.result
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.value is not None:
+            bda_id, _ = dlg.value
             self.db.associate_bda(eid, bda_id)
             self._refresh()
 
@@ -1357,16 +1371,36 @@ class DiaryTab(QWidget):
             self.on_change()
 
     def _delete_user(self):
-        row = self.user_list.currentRow()
-        if row < 0:
+        if not self._checked_users:
+            QMessageBox.information(self, "Elimina", "Nessun utente selezionato.")
             return
-        user = self._users[row]
-        reply = QMessageBox.question(
-            self, "Conferma", f"Eliminare '{user['code']}' e tutto il suo diario?"
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        self.db.delete_user(user["code"])
+        codes = sorted(self._checked_users)
+        if len(codes) == 1:
+            msg = f"Eliminare '{codes[0]}' e tutto il suo diario?"
+            if QMessageBox.question(self, "Conferma", msg) != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Conferma eliminazione")
+            dlg.setMinimumWidth(320)
+            lay = QVBoxLayout(dlg)
+            lay.addWidget(QLabel(f"Eliminare {len(codes)} utenti e tutti i loro diari?"))
+            lst = QListWidget()
+            lst.addItems(codes)
+            lst.setFixedHeight(min(len(codes), 10) * lst.sizeHintForRow(0) + 4)
+            lst.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            lay.addWidget(lst)
+            btns = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
+            )
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            lay.addWidget(btns)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+        for code in codes:
+            self.db.delete_user(code)
+        self._checked_users.clear()
         self.current_user = None
         for frm in self.day_frames:
             frm.load_user(None)
@@ -1455,13 +1489,18 @@ class DiaryTab(QWidget):
             return
 
         dlg = DiaryImportDialog(self, df)
-        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.value:
             return
 
-        mapping = dlg.result
+        mapping = dlg.value
         imported, skipped = 0, 0
+        total = len(df)
 
-        for _, row in df.iterrows():
+        progress = QProgressDialog("Importazione diario in corso…", None, 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        for i, (_, row) in enumerate(df.iterrows()):
             try:
                 user_code = str(row[mapping["user_code"]]).strip()
                 day = int(float(str(row[mapping["day"]]).strip()))
@@ -1494,6 +1533,11 @@ class DiaryTab(QWidget):
                 imported += 1
             except Exception:
                 skipped += 1
+            if i % 100 == 0:
+                progress.setValue(i)
+                QApplication.processEvents()
+
+        progress.setValue(total)
 
         msg = f"Importate {imported} voci."
         if skipped:
@@ -1531,8 +1575,13 @@ class DiaryTab(QWidget):
         ncols = df_full.shape[1]
 
         imported, skipped = 0, 0
+        total = len(data)
 
-        for _, row in data.iterrows():
+        progress = QProgressDialog("Importazione Content Export in corso…", None, 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        for row_idx, (_, row) in enumerate(data.iterrows()):
             raw_user = str(row.iloc[0])
             user_code = raw_user.strip().strip("\r\n")
             if not user_code or user_code.lower() == "nan":
@@ -1543,11 +1592,10 @@ class DiaryTab(QWidget):
                     continue
                 raw_date = row.iloc[day_col]
                 if pd.isna(raw_date) or str(raw_date).strip().lower() == "nan":
-                    continue  # questo giorno non è compilato
+                    continue
 
                 day_num = day_idx + 1
 
-                # Salva solo la data come etichetta del giorno (es. "15/03/2024")
                 if isinstance(raw_date, pd.Timestamp):
                     date_str = raw_date.strftime("%d/%m/%Y")
                 else:
@@ -1555,11 +1603,9 @@ class DiaryTab(QWidget):
                 self.db.add_user(user_code)
                 self.db.set_day_meta(user_code, day_num, date_str)
 
-                # Sovrascrittura: elimina le voci esistenti per questo utente+giorno
                 self.db.delete_entries_for_day(user_code, day_num)
 
                 for meal_name, food_offset, max_items in _CONTENT_EXPORT_MEALS:
-                    # Ora e Luogo del pasto sono nelle 2 colonne prima dei cibi
                     ora_col = day_col + food_offset - 2
                     luogo_col = day_col + food_offset - 1
                     meal_ora = ""
@@ -1599,6 +1645,12 @@ class DiaryTab(QWidget):
                             imported += 1
                         except Exception:
                             skipped += 1
+
+            if row_idx % 10 == 0:
+                progress.setValue(row_idx)
+                QApplication.processEvents()
+
+        progress.setValue(total)
 
         msg = f"Importate {imported} voci da Content Export."
         if skipped:

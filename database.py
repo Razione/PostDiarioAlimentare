@@ -260,7 +260,7 @@ class Database:
         with self._conn() as conn:
             conn.execute("DELETE FROM diary_entries WHERE id=?", (entry_id,))
 
-    def count_entries(self, user_code):
+    def count_entries(self, user_code) -> tuple[int, int]:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) as tot, SUM(bda_food_id IS NOT NULL) as assoc "
