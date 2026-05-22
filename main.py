@@ -83,7 +83,9 @@ class BDASearchDialog(QDialog):
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Alimento"])
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr0 = self.tree.header()
+        assert hdr0 is not None
+        hdr0.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.itemDoubleClicked.connect(lambda _: self._select())
         layout.addWidget(self.tree)
@@ -263,9 +265,9 @@ class PreferencesDialog(QDialog):
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Nutriente (colonna BDA)", "Soglia"])
         hdr = self.table.horizontalHeader()
-        if hdr:
-            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
@@ -370,9 +372,9 @@ class FormulaDialog(QDialog):
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Nutriente", "Formula"])
         hdr = self.table.horizontalHeader()
-        if hdr:
-            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-            hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setItemDelegateForColumn(1, _SelectAllDelegate(self.table))
@@ -714,9 +716,9 @@ class BDATab(QWidget):
         self.tree.setColumnCount(len(display_cols))
         self.tree.setHeaderLabels(headers)
         hdr = self.tree.header()
-        if hdr:
-            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-            hdr.setStretchLastSection(False)
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(False)
         self.tree.setColumnWidth(0, 260)
         for i in range(1, len(display_cols)):
             self.tree.setColumnWidth(i, 90)
@@ -896,9 +898,9 @@ class DayFrame(QWidget):
         self.tree.setColumnWidth(9, 48)
         self.tree.setColumnWidth(10, 55)
         hdr = self.tree.header()
-        if hdr:
-            hdr.setStretchLastSection(False)
-            hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        assert hdr is not None
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setAlternatingRowColors(True)
         self.tree.setItemDelegate(_DayFrameDelegate(self._qty_col, self._nova_col, self.tree))
@@ -1137,8 +1139,8 @@ class NutriSummaryFrame(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         hdr = self.table.horizontalHeader()
-        if hdr:
-            hdr.setStretchLastSection(False)
+        assert hdr is not None
+        hdr.setStretchLastSection(False)
         layout.addWidget(self.table)
 
         self.warn_lbl = QLabel("")
@@ -1183,10 +1185,10 @@ class NutriSummaryFrame(QWidget):
             ["Nutriente", "Giorno 1", "Giorno 2", "Giorno 3", "Giorno 4", "Media"]
         )
         hdr = self.table.horizontalHeader()
-        if hdr:
-            hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            for col in range(1, 6):
-                hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 6):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
         self.table.setRowCount(len(nutrient_cols))
         for row, col_name in enumerate(nutrient_cols):
@@ -1495,6 +1497,7 @@ class DiaryTab(QWidget):
         mapping = dlg.value
         imported, skipped = 0, 0
         total = len(df)
+        last_food: dict[tuple, str] = {}
 
         progress = QProgressDialog("Importazione diario in corso…", None, 0, total, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1510,7 +1513,10 @@ class DiaryTab(QWidget):
                 if not user_code or user_code.lower() == "nan":
                     continue
                 if not food or food.lower() == "nan":
+                    food = last_food.get((user_code, day, meal), "")
+                if not food:
                     continue
+                last_food[(user_code, day, meal)] = food
                 if day not in DAYS:
                     skipped += 1
                     continue
@@ -1619,20 +1625,28 @@ class DiaryTab(QWidget):
                         if v and v.lower() != "nan":
                             meal_luogo = v
 
+                    last_food_name = ""
                     for i in range(max_items):
                         fc = day_col + food_offset + i * 3
                         if fc >= ncols:
                             break
                         food_name = str(row.iloc[fc]).strip()
-                        if not food_name or food_name.lower() == "nan":
-                            continue
-
+                        if food_name.lower() == "nan":
+                            food_name = ""
                         desc = str(row.iloc[fc + 1]).strip() if fc + 1 < ncols else ""
-                        qty_raw = str(row.iloc[fc + 2]).strip() if fc + 2 < ncols else ""
                         if desc.lower() == "nan":
                             desc = ""
+                        qty_raw = str(row.iloc[fc + 2]).strip() if fc + 2 < ncols else ""
                         if qty_raw.lower() == "nan":
                             qty_raw = ""
+
+                        if not food_name and not desc and not qty_raw:
+                            continue
+                        if not food_name:
+                            food_name = last_food_name
+                        if not food_name:
+                            continue
+                        last_food_name = food_name
 
                         qty_g = _parse_qty_grams(qty_raw)
                         notes = desc
@@ -1679,8 +1693,10 @@ class App(QMainWindow):
 
     def _build_menu(self):
         mb = self.menuBar()
+        assert mb is not None
 
         file_m = mb.addMenu("File")
+        assert file_m is not None
         act_bda = QAction("Carica BDA da Excel", self)
         act_bda.triggered.connect(lambda: (self.nb.setCurrentIndex(0), self.bda_tab._load_bda()))
         file_m.addAction(act_bda)
@@ -1690,6 +1706,7 @@ class App(QMainWindow):
         file_m.addAction(act_exit)
 
         pref_m = mb.addMenu("Preferenze")
+        assert pref_m is not None
         act_mnova = QAction("Cutoff mNOVA…", self)
         act_mnova.triggered.connect(self._open_preferences)
         pref_m.addAction(act_mnova)
@@ -1698,6 +1715,7 @@ class App(QMainWindow):
         pref_m.addAction(act_formula)
 
         help_m = mb.addMenu("Aiuto")
+        assert help_m is not None
         act_about = QAction("Informazioni", self)
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)
