@@ -765,19 +765,26 @@ class UsersTab(QWidget):
         layout.addWidget(self.users_group)
 
         right_group = QGroupBox("Dettagli")
-        right_layout = QFormLayout(right_group)
+        right_vbox = QVBoxLayout(right_group)
+
+        top_form = QFormLayout()
         self.code_lbl = QLabel("—")
         self.code_lbl.setFont(QFont("", 11, QFont.Weight.Bold))
-        right_layout.addRow("Codice:", self.code_lbl)
-        self.notes_edit = QTextEdit()
-        self.notes_edit.setAcceptRichText(False)
-        right_layout.addRow("Note:", self.notes_edit)
-        btn_save = QPushButton("Salva note")
-        btn_save.clicked.connect(self._save_notes)
-        right_layout.addRow("", btn_save)
+        top_form.addRow("Codice:", self.code_lbl)
         self.stats_lbl = QLabel("")
         self.stats_lbl.setStyleSheet("color: gray;")
-        right_layout.addRow(self.stats_lbl)
+        top_form.addRow(self.stats_lbl)
+        right_vbox.addLayout(top_form)
+
+        right_vbox.addWidget(QLabel("Note:"))
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setAcceptRichText(False)
+        right_vbox.addWidget(self.notes_edit)
+
+        btn_save = QPushButton("Salva note")
+        btn_save.clicked.connect(self._save_notes)
+        right_vbox.addWidget(btn_save)
+
         layout.addWidget(right_group)
 
     def _refresh(self, notify=True):
@@ -899,8 +906,7 @@ class DayFrame(QWidget):
         self.tree.setColumnWidth(10, 55)
         hdr = self.tree.header()
         assert hdr is not None
-        hdr.setStretchLastSection(False)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        hdr.setStretchLastSection(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setAlternatingRowColors(True)
         self.tree.setItemDelegate(_DayFrameDelegate(self._qty_col, self._nova_col, self.tree))
