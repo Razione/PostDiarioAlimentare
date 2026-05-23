@@ -752,7 +752,7 @@ class UsersTab(QWidget):
         self.search_user.textChanged.connect(self._filter_users)
         left_layout.addWidget(self.search_user)
         self.list_widget = QListWidget()
-        self.list_widget.setFont(QFont("Courier", 11))
+        self.list_widget.setFont(QFont("Segoe UI", 11))
         self.list_widget.currentRowChanged.connect(self._on_select)
         left_layout.addWidget(self.list_widget)
         btn_add = QPushButton("Aggiungi")
@@ -769,7 +769,7 @@ class UsersTab(QWidget):
 
         top_form = QFormLayout()
         self.code_lbl = QLabel("—")
-        self.code_lbl.setFont(QFont("", 11, QFont.Weight.Bold))
+        self.code_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         top_form.addRow("Codice:", self.code_lbl)
         self.stats_lbl = QLabel("")
         self.stats_lbl.setStyleSheet("color: gray;")
@@ -889,6 +889,7 @@ class DayFrame(QWidget):
         self._nova_col  = 9
         self._mnova_col = 10
         self.tree = QTreeWidget()
+        self.tree.setFont(QFont("Segoe UI", 11))
         self.tree.setHeaderLabels([
             "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
             "Qtà org.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
@@ -951,7 +952,7 @@ class DayFrame(QWidget):
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            color = QColor("#1a7a1a") if e["bda_food_id"] else QColor("#b05a00")
+            color = QColor("#6dbf6d") if e["bda_food_id"] else QColor("#ffffff")
             for col in range(11):
                 item.setForeground(col, color)
             self.tree.addTopLevelItem(item)
@@ -1251,7 +1252,7 @@ class DiaryTab(QWidget):
         left_layout.addWidget(self.search_user)
 
         self.user_list = QListWidget()
-        self.user_list.setFont(QFont("Courier", 11))
+        self.user_list.setFont(QFont("Segoe UI", 11))
         self.user_list.currentRowChanged.connect(self._on_user_change)
         self.user_list.itemChanged.connect(self._on_check_changed)
         left_layout.addWidget(self.user_list)
@@ -1477,8 +1478,28 @@ class DiaryTab(QWidget):
             return
 
         df = pd.DataFrame(rows)
+
+        avg_rows = []
+        for user_code in sorted(self._checked_users):
+            user_rows = [r for r in rows if r["Utente"] == user_code]
+            if not user_rows:
+                continue
+            avg_row: dict = {"Utente": user_code}
+            for col in nutrient_cols:
+                vals = [r[col] for r in user_rows]
+                avg_row[col] = round(sum(vals) / len(vals), 4) if vals else 0.0
+            missing_vals = [r["Voci senza BDA"] for r in user_rows]
+            avg_row["Voci senza BDA (media)"] = round(
+                sum(missing_vals) / len(missing_vals), 2
+            ) if missing_vals else 0
+            avg_rows.append(avg_row)
+
+        df_avg = pd.DataFrame(avg_rows)
+
         try:
-            df.to_excel(path, index=False)
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                df.to_excel(writer, sheet_name="Dettaglio giorni", index=False)
+                df_avg.to_excel(writer, sheet_name="Media 4 giorni", index=False)
             QMessageBox.information(self, "Esporta", f"Esportazione completata:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Errore", f"Impossibile salvare il file:\n{exc}")
