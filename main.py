@@ -701,6 +701,70 @@ def _qty_display(qty) -> str:
     return "—" if qty is None else f"{qty:.4g}"
 
 
+def _open_excel(path):
+    """Apre un file Excel in modo robusto (anche .xlsx con estensione errata)."""
+    try:
+        return pd.ExcelFile(path)
+    except Exception:
+        return pd.ExcelFile(path, engine="openpyxl")
+
+
+def _parse_bda_categories(xl) -> list:
+    """Legge il foglio delle categorie merceologiche dall'Excel BDA.
+
+    Struttura attesa: Codice | Categoria Merceologica (IT) | Food Categories (EN).
+    Le macro-categorie (codici < 1000, nomi maiuscoli) raggruppano le
+    sotto-categorie che le seguono nell'elenco. Ritorna lista di record o [].
+    """
+    sheet = next(
+        (s for s in xl.sheet_names
+         if "CATMERCEOL" in str(s).upper() or "CATEGOR" in str(s).upper()),
+        None,
+    )
+    if not sheet:
+        return []
+    df = pd.read_excel(xl, sheet_name=sheet)
+    if df.shape[1] < 2:
+        return []
+    out, macro = [], None
+    for _, r in df.iterrows():
+        code = r.iloc[0]
+        if pd.isna(code):
+            continue
+        try:
+            c = str(int(float(code)))
+        except (TypeError, ValueError):
+            continue
+        name_it = "" if pd.isna(r.iloc[1]) else str(r.iloc[1]).strip()
+        name_en = "" if (df.shape[1] < 3 or pd.isna(r.iloc[2])) else str(r.iloc[2]).strip()
+        if int(c) < 1000:  # macro-categoria
+            macro = (c, name_it, name_en)
+            out.append({"code": c, "name_it": name_it, "name_en": name_en,
+                        "macro_code": c, "macro_name_it": name_it, "macro_name_en": name_en})
+        else:              # sotto-categoria → eredita la macro precedente
+            out.append({"code": c, "name_it": name_it, "name_en": name_en,
+                        "macro_code": macro[0] if macro else None,
+                        "macro_name_it": macro[1] if macro else None,
+                        "macro_name_en": macro[2] if macro else None})
+    return out
+
+
+def _category_code(cm_value) -> str:
+    """Normalizza il valore 'Categoria Merceologica' di un alimento a codice stringa."""
+    if cm_value is None:
+        return ""
+    try:
+        return str(int(float(cm_value)))
+    except (TypeError, ValueError):
+        return str(cm_value).strip()
+
+
+def _food_category_name(cat_map: dict, cm_value) -> str:
+    """Nome (IT) della categoria di un alimento, da 'Categoria Merceologica'."""
+    rec = cat_map.get(_category_code(cm_value))
+    return rec["name_it"] if rec else ""
+
+
 def _load_cutoffs(db) -> list:
     """Carica i cutoff mNOVA dal DB (lista di {'col': str, 'threshold': float})."""
     try:
@@ -923,6 +987,12 @@ class BDATab(QWidget):
         self.search_edit = QLineEdit()
         self.search_edit.textChanged.connect(self._refresh_view)
         search_row.addWidget(self.search_edit)
+        search_row.addWidget(QLabel("Categoria:"))
+        self.cat_filter = QComboBox()
+        self.cat_filter.setMinimumWidth(240)
+        self._cat_codes_loaded = None
+        self.cat_filter.currentIndexChanged.connect(self._refresh_view)
+        search_row.addWidget(self.cat_filter)
         layout.addLayout(search_row)
 
         self.tree = QTreeWidget()
@@ -938,7 +1008,7 @@ class BDATab(QWidget):
         if not path:
             return
         try:
-            xl = pd.ExcelFile(path)
+            xl = _open_excel(path)
             # Trova il foglio BDA (es. "BDA-2022", "BDA 2022", ...)
             bda_sheet = next(
                 (s for s in xl.sheet_names if "BDA" in str(s).upper()),
@@ -999,11 +1069,24 @@ class BDATab(QWidget):
         QApplication.processEvents()
         self.db.import_bda(records)
         self.db.set_setting("bda_path", path)
+
+        # Importa anche le categorie merceologiche, se presenti nel file.
+        cat_records = []
+        try:
+            cat_records = _parse_bda_categories(xl)
+            if cat_records:
+                self.db.import_bda_categories(cat_records)
+        except Exception:
+            cat_records = []
+
         self._refresh_view()
         progress.reset()
+        cat_msg = (f"\n{len(cat_records)} categorie merceologiche importate."
+                   if cat_records else
+                   "\n(Nessun foglio categorie trovato nel file.)")
         QMessageBox.information(
             self, "BDA caricata",
-            f"Importati {len(records):,} alimenti dal foglio '{bda_sheet}'.",
+            f"Importati {len(records):,} alimenti dal foglio '{bda_sheet}'.{cat_msg}",
         )
 
     def _refresh_view(self):
@@ -1017,26 +1100,58 @@ class BDATab(QWidget):
         self.status_lbl.setText(f"{count:,} alimenti in BDA")
         self.status_lbl.setStyleSheet("color: green;")
 
+        cat_map = self.db.get_categories_map()
+        has_cats = bool(cat_map)
+        self._populate_cat_filter(cat_map)
+        sel_code = self.cat_filter.currentData() if has_cats else ""
+
         nutrient_cols = self.db.get_bda_columns()
-        display_cols = ["name"] + nutrient_cols
-        headers = ["Alimento"] + [str(c) for c in nutrient_cols]
-        self.tree.setColumnCount(len(display_cols))
+        extra = ["Categoria"] if has_cats else []
+        headers = ["Alimento"] + extra + [str(c) for c in nutrient_cols]
+        self.tree.setColumnCount(len(headers))
         self.tree.setHeaderLabels(headers)
         hdr = self.tree.header()
         assert hdr is not None
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         hdr.setStretchLastSection(False)
         self.tree.setColumnWidth(0, 260)
-        for i in range(1, len(display_cols)):
+        if has_cats:
+            self.tree.setColumnWidth(1, 200)
+        for i in range(1 + len(extra), len(headers)):
             self.tree.setColumnWidth(i, 90)
 
-        foods = self.db.search_bda(self.search_edit.text(), limit=500)
+        foods = self.db.search_bda(self.search_edit.text(), limit=100000)
         self.tree.clear()
+        shown = 0
         for f in foods:
-            vals = [f["name"]] + [
+            code = _category_code(f.get("Categoria Merceologica"))
+            if sel_code and code != sel_code:
+                continue
+            cat_cells = [(cat_map.get(code, {}).get("name_it") or "")] if has_cats else []
+            vals = [f["name"]] + cat_cells + [
                 ("" if f.get(c) is None else str(f[c])) for c in nutrient_cols
             ]
             self.tree.addTopLevelItem(QTreeWidgetItem(vals))
+            shown += 1
+
+        if sel_code:
+            self.status_lbl.setText(
+                f"{shown:,} alimenti · {self.cat_filter.currentText()}"
+            )
+
+    def _populate_cat_filter(self, cat_map):
+        """Popola il combo del filtro categoria (solo sotto-categorie), una volta."""
+        codes = tuple(sorted(c for c, r in cat_map.items() if r.get("macro_code") != c))
+        if self._cat_codes_loaded == codes:
+            return
+        self._cat_codes_loaded = codes
+        self.cat_filter.blockSignals(True)
+        self.cat_filter.clear()
+        if codes:
+            self.cat_filter.addItem("Tutte le categorie", "")
+            for c in sorted(codes, key=lambda c: cat_map[c].get("name_it") or ""):
+                self.cat_filter.addItem(cat_map[c].get("name_it") or c, c)
+        self.cat_filter.blockSignals(False)
 
 
 class UsersTab(QWidget):
@@ -1243,6 +1358,8 @@ class DayFrame(QWidget):
         for e in entries:
             nova = e.get("nova")
             bda_data = bda_cache.get(e["bda_food_id"]) if e.get("bda_food_id") else None
+            resolved = bda_data is not None                 # associazione valida
+            orphaned = bool(e.get("bda_food_id")) and not resolved  # link rotto
             mnova = _compute_mnova(nova, bda_data, cutoffs)
             item = QTreeWidgetItem([
                 e["meal"],
@@ -1253,13 +1370,18 @@ class DayFrame(QWidget):
                 e.get("qty_raw") or "",
                 _qty_display(e.get("quantity_g")),
                 e.get("bda_name") or "—",
-                "✓" if e["bda_food_id"] else "—",
+                "✓" if resolved else ("⚠" if orphaned else "—"),
                 str(nova) if nova is not None else "—",
                 mnova or "—",
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, e["id"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            color = QColor("#6dbf6d") if e["bda_food_id"] else QColor("#ffffff")
+            if resolved:
+                color = QColor("#6dbf6d")
+            elif orphaned:
+                color = QColor("#d08a00")  # arancione: era associato, link da rifare
+            else:
+                color = QColor("#ffffff")
             for col in range(11):
                 item.setForeground(col, color)
             self.tree.addTopLevelItem(item)
@@ -1819,6 +1941,17 @@ class DiaryTab(QWidget):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
+        right_top = QHBoxLayout()
+        right_top.addStretch()
+        btn_verify = QPushButton("Verifica / riassegna BDA")
+        btn_verify.setToolTip(
+            "Ricontrolla le associazioni dell'utente aperto: ricollega per Codice "
+            "Alimento e segnala alimenti non più in BDA o con valori modificati."
+        )
+        btn_verify.clicked.connect(self._verify_bda)
+        right_top.addWidget(btn_verify)
+        right_layout.addLayout(right_top)
+
         self.day_nb = QTabWidget()
         self.day_frames = []
         for d in DAYS:
@@ -1884,6 +2017,43 @@ class DiaryTab(QWidget):
         # Aggiorna il riepilogo ogni volta che viene selezionato il tab
         if idx == len(DAYS):
             self.nutri_frame._refresh()
+
+    def _verify_bda(self):
+        if not self.current_user:
+            QMessageBox.information(self, "Verifica BDA", "Seleziona prima un utente.")
+            return
+        if self.db.count_bda() == 0:
+            QMessageBox.warning(self, "Verifica BDA", "Nessuna BDA caricata.")
+            return
+
+        rep = self.db.reassign_user_bda(self.current_user)
+        for frm in self.day_frames:
+            frm._refresh()
+        self.nutri_frame._refresh()
+        if self.on_change:
+            self.on_change()
+
+        summary = (
+            f"Utente: {self.current_user}\n\n"
+            f"✓ Già corrette:        {rep['ok']}\n"
+            f"🔗 Ri-collegate:        {len(rep['relinked'])}\n"
+            f"✎ Valori modificati:   {len(rep['changed'])}\n"
+            f"⚠ Non più in BDA:      {len(rep['missing'])}"
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Verifica / riassegna BDA")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(summary)
+        detail = []
+        if rep["relinked"]:
+            detail.append("RI-COLLEGATE (id aggiornato):\n  " + "\n  ".join(rep["relinked"]))
+        if rep["changed"]:
+            detail.append("VALORI MODIFICATI dall'associazione:\n  " + "\n  ".join(rep["changed"]))
+        if rep["missing"]:
+            detail.append("NON PIÙ IN BDA (da ri-associare a mano):\n  " + "\n  ".join(rep["missing"]))
+        if detail:
+            box.setDetailedText("\n\n".join(detail))
+        box.exec()
 
     def _add_user(self):
         code, ok = QInputDialog.getText(self, "Nuovo utente", "Codice utente:")

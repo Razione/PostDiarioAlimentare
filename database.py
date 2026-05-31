@@ -3,9 +3,25 @@
 import sqlite3
 import json
 import contextlib
+import hashlib
 import os
 import pathlib
 import sys
+
+
+# Colonne BDA non nutrizionali: escluse dalla "fotografia" dei valori.
+_SNAPSHOT_SKIP = {"id", "name", "Simbolo", "Codice Alimento", "Nome Alimento ENG",
+                  "Nome Scientifico", "Categoria Merceologica", "parte edibile"}
+
+
+def bda_value_hash(food: dict) -> str:
+    """Hash stabile dei soli valori nutrizionali di un alimento BDA."""
+    if not food:
+        return ""
+    items = sorted((k, v) for k, v in food.items() if k not in _SNAPSHOT_SKIP)
+    return hashlib.sha1(
+        json.dumps(items, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _default_db_path() -> str:
@@ -49,6 +65,14 @@ class Database:
                     name TEXT NOT NULL,
                     data TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS bda_categories (
+                    code          TEXT PRIMARY KEY,
+                    name_it       TEXT,
+                    name_en       TEXT,
+                    macro_code    TEXT,
+                    macro_name_it TEXT,
+                    macro_name_en TEXT
+                );
                 CREATE TABLE IF NOT EXISTS users (
                     code  TEXT PRIMARY KEY,
                     notes TEXT DEFAULT ''
@@ -65,7 +89,9 @@ class Database:
                     ora         TEXT    DEFAULT '',
                     luogo       TEXT    DEFAULT '',
                     qty_raw     TEXT    DEFAULT '',
-                    nova        INTEGER DEFAULT NULL
+                    nova        INTEGER DEFAULT NULL,
+                    bda_code    TEXT    DEFAULT '',
+                    bda_hash    TEXT    DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key   TEXT PRIMARY KEY,
@@ -83,8 +109,10 @@ class Database:
             for stmt in [
                 "ALTER TABLE diary_entries ADD COLUMN ora     TEXT    DEFAULT ''",
                 "ALTER TABLE diary_entries ADD COLUMN luogo   TEXT    DEFAULT ''",
-                "ALTER TABLE diary_entries ADD COLUMN qty_raw TEXT    DEFAULT ''",
-                "ALTER TABLE diary_entries ADD COLUMN nova    INTEGER DEFAULT NULL",
+                "ALTER TABLE diary_entries ADD COLUMN qty_raw  TEXT    DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN nova     INTEGER DEFAULT NULL",
+                "ALTER TABLE diary_entries ADD COLUMN bda_code TEXT    DEFAULT ''",
+                "ALTER TABLE diary_entries ADD COLUMN bda_hash TEXT    DEFAULT ''",
             ]:
                 try:
                     conn.execute(stmt)
@@ -133,11 +161,43 @@ class Database:
     # ── BDA ──────────────────────────────────────────────────────────────────
 
     def import_bda(self, records):
+        """Sostituisce la BDA preservando gli id degli alimenti già presenti.
+
+        L'id di ogni alimento viene mantenuto stabile in base al suo
+        'Codice Alimento': così le associazioni del diario (diary_entries.
+        bda_food_id) non si rompono quando la BDA viene ricaricata.
+        """
         with self._conn() as conn:
+            # Mappa codice-alimento → id esistente, per riusare gli stessi id.
+            existing = {}
+            for row in conn.execute("SELECT id, data FROM bda_foods"):
+                try:
+                    code = json.loads(row["data"]).get("Codice Alimento")
+                except Exception:
+                    code = None
+                if code not in (None, ""):
+                    existing[str(code)] = row["id"]
+
             conn.execute("DELETE FROM bda_foods")
+
+            used = set(existing.values())
+            next_id = max(used) if used else 0
+            rows = []
+            for r in records:
+                code = r["data"].get("Codice Alimento")
+                code = None if code in (None, "") else str(code)
+                if code is not None and code in existing:
+                    fid = existing[code]
+                else:
+                    next_id += 1
+                    while next_id in used:
+                        next_id += 1
+                    fid = next_id
+                    used.add(fid)
+                rows.append((fid, r["name"], json.dumps(r["data"], ensure_ascii=False)))
+
             conn.executemany(
-                "INSERT INTO bda_foods (name, data) VALUES (?, ?)",
-                [(r["name"], json.dumps(r["data"], ensure_ascii=False)) for r in records],
+                "INSERT INTO bda_foods (id, name, data) VALUES (?, ?, ?)", rows
             )
         self._bda_columns_cache = None
 
@@ -177,6 +237,35 @@ class Database:
     def count_bda(self):
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM bda_foods").fetchone()[0]
+
+    # ── BDA categories ────────────────────────────────────────────────────────
+
+    def import_bda_categories(self, records):
+        """Sostituisce le categorie merceologiche.
+
+        records: lista di dict con chiavi code, name_it, name_en,
+        macro_code, macro_name_it, macro_name_en.
+        """
+        with self._conn() as conn:
+            conn.execute("DELETE FROM bda_categories")
+            conn.executemany(
+                "INSERT OR REPLACE INTO bda_categories "
+                "(code, name_it, name_en, macro_code, macro_name_it, macro_name_en) "
+                "VALUES (?,?,?,?,?,?)",
+                [(r["code"], r.get("name_it"), r.get("name_en"),
+                  r.get("macro_code"), r.get("macro_name_it"), r.get("macro_name_en"))
+                 for r in records],
+            )
+
+    def get_categories_map(self):
+        """Ritorna {code: {name_it, name_en, macro_code, macro_name_it, ...}}."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM bda_categories").fetchall()
+        return {r["code"]: dict(r) for r in rows}
+
+    def count_categories(self):
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM bda_categories").fetchone()[0]
 
     # ── Users ─────────────────────────────────────────────────────────────────
 
@@ -220,6 +309,7 @@ class Database:
         sql = """
             SELECT de.id, de.day, de.meal, de.food_name, de.quantity_g,
                    de.bda_food_id, de.notes, de.ora, de.luogo, de.qty_raw, de.nova,
+                   de.bda_code, de.bda_hash,
                    bf.name AS bda_name
             FROM diary_entries de
             LEFT JOIN bda_foods bf ON de.bda_food_id = bf.id
@@ -241,10 +331,78 @@ class Database:
             )
 
     def associate_bda(self, entry_id, bda_food_id):
+        """Associa una voce a un alimento BDA, salvando anche il Codice Alimento
+        e una fotografia dei valori (per verificare in seguito link e modifiche)."""
+        food = self.get_bda_food(bda_food_id) if bda_food_id is not None else None
+        code = "" if not food else str(food.get("Codice Alimento") or "")
+        h = bda_value_hash(food) if food else ""
         with self._conn() as conn:
             conn.execute(
-                "UPDATE diary_entries SET bda_food_id=? WHERE id=?", (bda_food_id, entry_id)
+                "UPDATE diary_entries SET bda_food_id=?, bda_code=?, bda_hash=? WHERE id=?",
+                (bda_food_id, code, h, entry_id),
             )
+
+    def get_bda_code_index(self):
+        """Ritorna {Codice Alimento: id} per gli alimenti BDA che hanno un codice."""
+        index = {}
+        with self._conn() as conn:
+            for row in conn.execute("SELECT id, data FROM bda_foods"):
+                try:
+                    code = json.loads(row["data"]).get("Codice Alimento")
+                except Exception:
+                    code = None
+                if code not in (None, ""):
+                    index[str(code)] = row["id"]
+        return index
+
+    def reassign_user_bda(self, user_code):
+        """Verifica e riaggancia le associazioni BDA dell'utente per Codice Alimento.
+
+        - link con id 'derivato' ma codice ancora in BDA → ri-collegato;
+        - codice non più presente in BDA → segnalato come 'mancante';
+        - valori dell'alimento cambiati dall'associazione → segnalato come 'cambiato'
+          (e la fotografia viene aggiornata).
+
+        Returns dict con liste di descrizioni: relinked, changed, missing, ok.
+        """
+        index = self.get_bda_code_index()
+        report = {"relinked": [], "changed": [], "missing": [], "ok": 0}
+        entries = self.get_entries(user_code)
+        for e in entries:
+            has_link = bool(e.get("bda_food_id")) or bool(e.get("bda_code"))
+            if not has_link:
+                continue  # mai associato → ignora
+
+            code = e.get("bda_code") or ""
+            # Legacy: nessun codice salvato ma id ancora valido → recupero il codice.
+            if not code and e.get("bda_food_id"):
+                food = self.get_bda_food(e["bda_food_id"])
+                if food:
+                    code = str(food.get("Codice Alimento") or "")
+
+            label = f"{e['food_name']} (g{e['day']} · {e['meal']})"
+            if not code or code not in index:
+                report["missing"].append(label)
+                continue
+
+            new_id = index[code]
+            food = self.get_bda_food(new_id)
+            new_hash = bda_value_hash(food)
+            if new_id != e.get("bda_food_id"):
+                self.associate_bda(e["id"], new_id)   # link derivato → ricollego
+                report["relinked"].append(label)
+            elif not e.get("bda_code"):
+                self.associate_bda(e["id"], new_id)   # era valido: salvo solo codice/hash
+                report["ok"] += 1
+            elif e.get("bda_hash") and e["bda_hash"] != new_hash:
+                # valori cambiati: aggiorno la fotografia e segnalo
+                with self._conn() as conn:
+                    conn.execute("UPDATE diary_entries SET bda_hash=? WHERE id=?",
+                                 (new_hash, e["id"]))
+                report["changed"].append(label)
+            else:
+                report["ok"] += 1
+        return report
 
     def update_entry(self, entry_id, **kwargs):
         allowed = {"food_name", "quantity_g", "meal", "day", "notes", "ora", "luogo", "qty_raw", "nova"}
@@ -261,10 +419,14 @@ class Database:
             conn.execute("DELETE FROM diary_entries WHERE id=?", (entry_id,))
 
     def count_entries(self, user_code) -> tuple[int, int]:
+        # 'assoc' conta solo le associazioni risolvibili (alimento BDA esistente),
+        # non i link orfani rimasti da una BDA ricaricata.
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) as tot, SUM(bda_food_id IS NOT NULL) as assoc "
-                "FROM diary_entries WHERE user_code=?",
+                "SELECT COUNT(*) as tot, SUM(bf.id IS NOT NULL) as assoc "
+                "FROM diary_entries de "
+                "LEFT JOIN bda_foods bf ON de.bda_food_id = bf.id "
+                "WHERE de.user_code=?",
                 (user_code,),
             ).fetchone()
         return row["tot"] or 0, row["assoc"] or 0

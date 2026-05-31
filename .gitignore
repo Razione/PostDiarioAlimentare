@@ -16,7 +16,11 @@ __pycache__/
 food_diary.db
 *.db
 
+# Excel / data files (user data, not source)
+*.xlsx
+*.xls
+*.xlsm
+
 # macOS
 .DS_Store
-Content_Export_mNOVAFFQfase2parte1_Testxlsx.xlsx
 .claude/settings.local.json
