@@ -538,6 +538,124 @@ class SpecialValuesDialog(QDialog):
         self.accept()
 
 
+class PercentDialog(QDialog):
+    """Preferenze: nutrienti per cui mostrare la % giornaliera, con fattore moltiplicativo."""
+
+    def __init__(self, parent, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Preferenze – Percentuali")
+        self.resize(520, 380)
+        self._build()
+        self._load()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        lbl = QLabel(
+            "Scegli i nutrienti per cui mostrare una colonna percentuale per ogni giorno.<br>"
+            "La % è calcolata come <b>(valore del giorno × fattore) / energia totale del "
+            "giorno × 100</b>.<br>Con fattore = kcal/g (proteine 4, grassi 9, carboidrati "
+            "3,75, fibra 2, alcol 7) ottieni la ripartizione energetica."
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(
+            ["Nutriente (colonna BDA)", "Fattore", "Denominatore"]
+        )
+        hdr = self.table.horizontalHeader()
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ Aggiungi")
+        btn_add.clicked.connect(self._add_row)
+        btn_row.addWidget(btn_add)
+        btn_del = QPushButton("Rimuovi")
+        btn_del.clicked.connect(self._remove_row)
+        btn_row.addWidget(btn_del)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(sep)
+
+        ok_row = QHBoxLayout()
+        ok_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        ok_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self._save)
+        btn_ok.setDefault(True)
+        ok_row.addWidget(btn_ok)
+        layout.addLayout(ok_row)
+
+    _ENERGY_DENOM_LABEL = "Energia totale"
+
+    def _cols(self):
+        return [c for c in (self.db.get_bda_columns() or []) if c not in _SKIP_BDA_COLS]
+
+    def _add_row(self, col_name="", factor="", denom=""):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        cb = QComboBox()
+        cb.addItems(self._cols())
+        if col_name:
+            idx = cb.findText(col_name)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+        self.table.setCellWidget(row, 0, cb)
+        self.table.setItem(row, 1, QTableWidgetItem(str(factor)))
+
+        dcb = QComboBox()
+        dcb.addItem(self._ENERGY_DENOM_LABEL, "")  # data "" = energia totale del giorno
+        for c in self._cols():
+            dcb.addItem(c, c)
+        d_idx = dcb.findData(denom or "")
+        dcb.setCurrentIndex(max(d_idx, 0))
+        self.table.setCellWidget(row, 2, dcb)
+
+    def _remove_row(self):
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        for r in sorted(rows, reverse=True):
+            self.table.removeRow(r)
+
+    def _load(self):
+        for c in _load_percent_config(self.db):
+            self._add_row(c.get("col", ""), c.get("factor", ""), c.get("denom", ""))
+
+    def _save(self):
+        config, errors = [], []
+        for row in range(self.table.rowCount()):
+            cb = self.table.cellWidget(row, 0)
+            it = self.table.item(row, 1)
+            dcb = self.table.cellWidget(row, 2)
+            if not isinstance(cb, QComboBox) or it is None:
+                continue
+            raw = it.text().strip().replace(",", ".")
+            try:
+                factor = float(raw)
+            except ValueError:
+                errors.append(f"• {cb.currentText()}: «{raw}» non è un numero valido")
+                continue
+            denom = dcb.currentData() if isinstance(dcb, QComboBox) else ""
+            config.append({"col": cb.currentText(), "factor": factor, "denom": denom or ""})
+        if errors:
+            QMessageBox.warning(self, "Fattori non validi",
+                                "Correggi i seguenti fattori:\n" + "\n".join(errors))
+            return
+        self.db.set_setting("percent_config", json.dumps(config, ensure_ascii=False))
+        self.accept()
+
+
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
@@ -606,6 +724,45 @@ def _load_cutoffs(db) -> list:
     """Carica i cutoff mNOVA dal DB (lista di {'col': str, 'threshold': float})."""
     try:
         return json.loads(db.get_setting("mnova_cutoffs", "[]"))
+    except Exception:
+        return []
+
+
+# Configurazione percentuali di default: (nomi-colonna accettati, fattore).
+# Denominatore di default = energia totale del giorno.
+_PERCENT_DEFAULT_TERMS = [
+    (("Total protein", "Proteine totali"),                              4.0),
+    (("Total fat", "Lipidi totali"),                                    9.0),
+    (("Available carbohydrates (MSE)", "Carboidrati disponibili (MSE)"), 3.75),
+    (("Dietary total fibre", "Dietary total fiber", "Fibra alimentare totale"), 2.0),
+    (("Alcohol", "Alcol"),                                              7.0),
+    (("Soluble carbohydrates (MSE)", "Carboidrati solubili (MSE)"),     3.75),
+]
+
+
+def _default_percent_config(db) -> list:
+    """Config % di default, adattata ai nomi-colonna effettivi della BDA."""
+    cols = set(db.get_bda_columns() or [])
+    out = []
+    for names, factor in _PERCENT_DEFAULT_TERMS:
+        col = next((n for n in names if n in cols), None)
+        if col:
+            out.append({"col": col, "factor": factor, "denom": ""})
+    return out
+
+
+def _load_percent_config(db) -> list:
+    """Nutrienti con colonna percentuale.
+
+    Lista di {'col': str, 'factor': float, 'denom': str}. 'denom' vuoto = energia
+    totale del giorno, altrimenti il nome di una colonna BDA. Se mai configurata,
+    ritorna la configurazione di default.
+    """
+    raw = db.get_setting("percent_config")
+    if raw is None:
+        return _default_percent_config(db)
+    try:
+        return json.loads(raw)
     except Exception:
         return []
 
@@ -1196,6 +1353,32 @@ _SKIP_BDA_COLS = {
     "Nome Scientifico", "Categoria Merceologica", "parte edibile",
 }
 
+# Energia totale (kcal) calcolata dai totali giornalieri dei macronutrienti.
+# Per ciascun termine: (nomi-colonna BDA accettati, coefficiente kcal/g).
+ENERGY_LABEL = "Energia totale RICALCOLATA (kcal)"
+_ENERGY_TERMS = [
+    (("Total protein", "Proteine totali"),                              4.0),
+    (("Total fat", "Lipidi totali"),                                    9.0),
+    (("Available carbohydrates (MSE)", "Carboidrati disponibili (MSE)"), 3.75),
+    (("Dietary total fibre", "Dietary total fiber", "Fibra alimentare totale"), 2.0),
+    (("Alcohol", "Alcol"),                                              7.0),
+]
+
+
+def _compute_energy_kcal(day_totals: dict) -> float:
+    """Energia (kcal) di un giorno dai totali dei macronutrienti.
+
+    (proteine*4) + (grassi*9) + (carboidrati disponibili*3,75)
+    + (fibra*2) + (alcol*7).
+    """
+    energy = 0.0
+    for names, coeff in _ENERGY_TERMS:
+        for name in names:
+            if name in day_totals:
+                energy += day_totals[name] * coeff
+                break
+    return energy
+
 
 def _compute_user_totals(db: "Database", user_code: str):
     """Calcola i totali nutrizionali per giorno per un utente.
@@ -1312,30 +1495,80 @@ class NutriSummaryFrame(QWidget):
         self.info_lbl.setText(f"Utente: {self.user_code}")
         self.info_lbl.setStyleSheet("")
 
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(
-            ["Nutriente", "Giorno 1", "Giorno 2", "Giorno 3", "Giorno 4", "Media"]
-        )
+        # Nutrienti con colonna %: {col: (fattore, denom)}. Mostrate solo se configurate.
+        percent_cfg = {c["col"]: (c["factor"], c.get("denom", ""))
+                       for c in _load_percent_config(self.db) if c.get("col")}
+        show_pct = bool(percent_cfg)
+
+        # Energia (kcal) per giorno: denominatore di default delle percentuali.
+        energy_vals = [_compute_energy_kcal(totals[d]) for d in DAYS]
+
+        headers = ["Nutriente"]
+        for d in DAYS:
+            headers.append(f"Giorno {d}")
+            if show_pct:
+                headers.append("%")
+        headers.append("Media")
+        if show_pct:
+            headers.append("% media")
+
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
         hdr = self.table.horizontalHeader()
         assert hdr is not None
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, 6):
+        for col in range(1, len(headers)):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
-        self.table.setRowCount(len(nutrient_cols))
-        for row, col_name in enumerate(nutrient_cols):
-            day_vals = [totals[d].get(col_name, 0.0) for d in DAYS]
+        # Riga 0: energia totale (kcal); poi un nutriente per riga.
+        rows_data = [(ENERGY_LABEL, energy_vals, None, True)]
+        rows_data += [
+            (col_name, [totals[d].get(col_name, 0.0) for d in DAYS],
+             percent_cfg.get(col_name), False)
+            for col_name in nutrient_cols
+        ]
+
+        def _num_item(text, bold):
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if bold:
+                f = QFont()
+                f.setBold(True)
+                it.setFont(f)
+            return it
+
+        self.table.setRowCount(len(rows_data))
+        for row, (label, day_vals, cfg, bold) in enumerate(rows_data):
             filled = [v for v in day_vals if v != 0.0]
             mean_val = sum(filled) / len(filled) if filled else 0.0
 
-            self.table.setItem(row, 0, QTableWidgetItem(str(col_name)))
-            for col_idx, val in enumerate(day_vals):
-                item = QTableWidgetItem(f"{val:.2f}")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(row, col_idx + 1, item)
-            mean_item = QTableWidgetItem(f"{mean_val:.2f}")
-            mean_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 5, mean_item)
+            # % per giorno = valore * fattore / denominatore del giorno * 100.
+            # denom vuoto → energia totale del giorno, altrimenti totale di quel nutriente.
+            factor, denom = cfg if cfg else (None, "")
+            denom_vals = energy_vals if not denom else [totals[d].get(denom, 0.0) for d in DAYS]
+            pct_vals = [
+                (dv * factor / den * 100.0) if (factor is not None and den) else None
+                for dv, den in zip(day_vals, denom_vals)
+            ]
+            pct_filled = [p for p in pct_vals if p is not None]
+            pct_mean = sum(pct_filled) / len(pct_filled) if pct_filled else None
+
+            name_item = QTableWidgetItem(str(label))
+            if bold:
+                f = QFont()
+                f.setBold(True)
+                name_item.setFont(f)
+            cells = [name_item]
+            for val, pct in zip(day_vals, pct_vals):
+                cells.append(_num_item(f"{val:.2f}", bold))
+                if show_pct:
+                    cells.append(_num_item("" if pct is None else f"{pct:.2f}%", bold))
+            cells.append(_num_item(f"{mean_val:.2f}", bold))
+            if show_pct:
+                cells.append(_num_item("" if pct_mean is None else f"{pct_mean:.2f}%", bold))
+
+            for col_idx, it in enumerate(cells):
+                self.table.setItem(row, col_idx, it)
 
         warn_parts = [
             f"Giorno {d}: {missing[d]} voci senza BDA"
@@ -1579,6 +1812,17 @@ class DiaryTab(QWidget):
             return
 
         nutrient_cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
+        # Config %: {col: (fattore, denom)}; denom vuoto = energia totale del giorno.
+        percent_cfg = {c["col"]: (c["factor"], c.get("denom", ""))
+                       for c in _load_percent_config(self.db) if c.get("col")}
+
+        def _pct_label(col):
+            return f"{col} (%)"
+
+        # Colonne con valori decimali: ricevono il formato "almeno 2 cifre".
+        float_cols = {ENERGY_LABEL}
+        float_cols.update(nutrient_cols)
+        float_cols.update(_pct_label(c) for c in nutrient_cols if c in percent_cfg)
 
         rows = []
         for user_code in sorted(self._checked_users):
@@ -1590,10 +1834,16 @@ class DiaryTab(QWidget):
                 continue
             for day in DAYS:
                 day_totals = totals[day]
+                energy = _compute_energy_kcal(day_totals)
                 row: dict = {"Utente": user_code, "Giorno": day}
+                row[ENERGY_LABEL] = round(energy, 4)
                 for col in nutrient_cols:
                     val = day_totals.get(col, 0.0)
                     row[col] = round(val, 4)
+                    if col in percent_cfg:
+                        factor, denom = percent_cfg[col]
+                        den = energy if not denom else day_totals.get(denom, 0.0)
+                        row[_pct_label(col)] = round(val * factor / den * 100, 4) if den else None
                 row["Voci senza BDA"] = missing[day]
                 rows.append(row)
 
@@ -1604,14 +1854,19 @@ class DiaryTab(QWidget):
         df = pd.DataFrame(rows)
 
         avg_rows = []
+        avg_value_cols = [ENERGY_LABEL]
+        for col in nutrient_cols:
+            avg_value_cols.append(col)
+            if col in percent_cfg:
+                avg_value_cols.append(_pct_label(col))
         for user_code in sorted(self._checked_users):
             user_rows = [r for r in rows if r["Utente"] == user_code]
             if not user_rows:
                 continue
             avg_row: dict = {"Utente": user_code}
-            for col in nutrient_cols:
-                vals = [r[col] for r in user_rows]
-                avg_row[col] = round(sum(vals) / len(vals), 4) if vals else 0.0
+            for col in avg_value_cols:
+                vals = [r[col] for r in user_rows if r.get(col) is not None]
+                avg_row[col] = round(sum(vals) / len(vals), 4) if vals else None
             missing_vals = [r["Voci senza BDA"] for r in user_rows]
             avg_row["Voci senza BDA (media)"] = round(
                 sum(missing_vals) / len(missing_vals), 2
@@ -1619,11 +1874,22 @@ class DiaryTab(QWidget):
             avg_rows.append(avg_row)
 
         df_avg = pd.DataFrame(avg_rows)
+        float_cols_avg = float_cols | {"Voci senza BDA (media)"}
+
+        def _apply_decimals(worksheet, columns, float_names):
+            """Imposta il formato celle ad almeno 2 cifre decimali (fino a 4)."""
+            for ci, cname in enumerate(columns, start=1):
+                if cname not in float_names:
+                    continue
+                for r in range(2, worksheet.max_row + 1):
+                    worksheet.cell(row=r, column=ci).number_format = "0.00##"
 
         try:
             with pd.ExcelWriter(path, engine="openpyxl") as writer:
                 df.to_excel(writer, sheet_name="Dettaglio giorni", index=False)
                 df_avg.to_excel(writer, sheet_name="Media 4 giorni", index=False)
+                _apply_decimals(writer.sheets["Dettaglio giorni"], list(df.columns), float_cols)
+                _apply_decimals(writer.sheets["Media 4 giorni"], list(df_avg.columns), float_cols_avg)
             QMessageBox.information(self, "Esporta", f"Esportazione completata:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Errore", f"Impossibile salvare il file:\n{exc}")
@@ -1867,6 +2133,9 @@ class App(QMainWindow):
         act_special = QAction("Valori speciali (-2 / -3)…", self)
         act_special.triggered.connect(self._open_special_values)
         pref_m.addAction(act_special)
+        act_percent = QAction("Percentuali…", self)
+        act_percent.triggered.connect(self._open_percent)
+        pref_m.addAction(act_percent)
 
         help_m = mb.addMenu("Aiuto")
         assert help_m is not None
@@ -1906,6 +2175,11 @@ class App(QMainWindow):
 
     def _open_special_values(self):
         dlg = SpecialValuesDialog(self, self.db)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.diary_tab.nutri_frame._refresh()
+
+    def _open_percent(self):
+        dlg = PercentDialog(self, self.db)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.diary_tab.nutri_frame._refresh()
 
