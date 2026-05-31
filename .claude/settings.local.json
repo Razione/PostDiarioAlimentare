@@ -5,7 +5,16 @@
       "Bash(\"C:\\\\Python314\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(\"C:\\\\Python314\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
       "Bash(\"C:\\\\Python314\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('database.py'\\).read\\(\\)\\); print\\('database.py OK'\\)\")",
-      "Bash(git commit -m 'Remove rthook_macos.py \\(workaround no longer needed\\) *)"
+      "Bash(git commit -m 'Remove rthook_macos.py \\(workaround no longer needed\\) *)",
+      "Bash(git rev-list *)",
+      "Bash(git push *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(gh auth *)",
+      "Bash(git ls-remote *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git stash *)"
     ]
   }
 }

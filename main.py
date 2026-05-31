@@ -446,6 +446,98 @@ class FormulaDialog(QDialog):
         self.accept()
 
 
+class SpecialValuesDialog(QDialog):
+    """Preferenze: valore sostitutivo per i codici speciali BDA (-2 tracce, -3 missing)."""
+
+    def __init__(self, parent, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Preferenze – Valori speciali (-2 / -3)")
+        self.resize(580, 300)
+        self._build()
+        self._load()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        lbl = QLabel(
+            "Nella BDA il valore <b>-2</b> indica le «tracce» (concentrazione molto bassa) "
+            "e <b>-3</b> indica un dato <b>mancante</b>.<br>"
+            "Scegli con quale valore numerico sostituirli nel calcolo del riepilogo "
+            "nutrizionale, ed eventualmente aggiorna la descrizione."
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        self.table = QTableWidget(len(_SPECIAL_CODES), 4)
+        self.table.setHorizontalHeaderLabels(
+            ["Codice", "Significato", "Valore sostitutivo", "Descrizione"]
+        )
+        hdr = self.table.horizontalHeader()
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        vh = self.table.verticalHeader()
+        if vh is not None:
+            vh.setVisible(False)
+        layout.addWidget(self.table)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(sep)
+
+        ok_row = QHBoxLayout()
+        ok_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        ok_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self._save)
+        btn_ok.setDefault(True)
+        ok_row.addWidget(btn_ok)
+        layout.addLayout(ok_row)
+
+    def _load(self):
+        special = _load_special_values(self.db)
+        for row, (code, name, _desc) in enumerate(_SPECIAL_CODES):
+            code_item = QTableWidgetItem(code)
+            code_item.setFlags(code_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            code_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, code_item)
+
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 1, name_item)
+
+            cfg = special[code]
+            val_item = QTableWidgetItem(f"{cfg['value']:g}")
+            val_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 2, val_item)
+
+            self.table.setItem(row, 3, QTableWidgetItem(cfg["desc"]))
+
+    def _save(self):
+        special, errors = {}, []
+        for row, (code, _name, _desc) in enumerate(_SPECIAL_CODES):
+            val_item = self.table.item(row, 2)
+            desc_item = self.table.item(row, 3)
+            raw = (val_item.text() if val_item else "").strip().replace(",", ".")
+            try:
+                value = float(raw)
+            except ValueError:
+                errors.append(f"• {code}: «{raw}» non è un numero valido")
+                continue
+            special[code] = {"value": value, "desc": desc_item.text() if desc_item else ""}
+        if errors:
+            QMessageBox.warning(self, "Valori non validi",
+                                "Correggi i seguenti valori:\n" + "\n".join(errors))
+            return
+        self.db.set_setting("special_values", json.dumps(special, ensure_ascii=False))
+        self.accept()
+
+
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
@@ -516,6 +608,35 @@ def _load_cutoffs(db) -> list:
         return json.loads(db.get_setting("mnova_cutoffs", "[]"))
     except Exception:
         return []
+
+
+# Codici speciali BDA: -2 = tracce (concentrazione molto bassa), -3 = dato mancante
+_SPECIAL_CODES = [
+    ("-2", "Tracce", "Concentrazione del componente molto bassa."),
+    ("-3", "Missing (dato mancante)",
+     "Componente non disponibile al momento nei dati di composizione."),
+]
+_SPECIAL_DEFAULTS = {code: {"value": 0.0, "desc": desc} for code, _name, desc in _SPECIAL_CODES}
+
+
+def _load_special_values(db) -> dict:
+    """Mappa i codici speciali BDA al valore sostitutivo scelto dall'utente.
+
+    Returns {'-2': {'value': float, 'desc': str}, '-3': {...}}.
+    """
+    try:
+        saved = json.loads(db.get_setting("special_values") or "{}")
+    except Exception:
+        saved = {}
+    out = {}
+    for code, default in _SPECIAL_DEFAULTS.items():
+        s = saved.get(code, {})
+        try:
+            value = float(s.get("value", default["value"]))
+        except (TypeError, ValueError):
+            value = default["value"]
+        out[code] = {"value": value, "desc": s.get("desc", default["desc"])}
+    return out
 
 
 def _compute_mnova(nova, bda_data: dict | None, cutoffs: list) -> str:
@@ -1089,6 +1210,8 @@ def _compute_user_totals(db: "Database", user_code: str):
         formulas = {}
     _default = "val * qty / 100"
     _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
+    # Sostituzioni per i codici speciali BDA (-2 tracce, -3 missing)
+    special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
     totals = {d: {} for d in DAYS}
     missing = {d: 0 for d in DAYS}
 
@@ -1109,8 +1232,10 @@ def _compute_user_totals(db: "Database", user_code: str):
             if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
                 continue
             try:
+                fval = float(val)
+                fval = special.get(fval, fval)  # rimpiazza -2/-3 col valore scelto
                 formula = formulas.get(col, _default)
-                result = eval(formula, _safe, {"val": float(val), "qty": qty})
+                result = eval(formula, _safe, {"val": fval, "qty": qty})
                 totals[day][col] = totals[day].get(col, 0.0) + result
             except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
                 pass
@@ -1205,11 +1330,10 @@ class NutriSummaryFrame(QWidget):
 
             self.table.setItem(row, 0, QTableWidgetItem(str(col_name)))
             for col_idx, val in enumerate(day_vals):
-                txt = f"{val:.2f}" if val != 0.0 else "—"
-                item = QTableWidgetItem(txt)
+                item = QTableWidgetItem(f"{val:.2f}")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(row, col_idx + 1, item)
-            mean_item = QTableWidgetItem(f"{mean_val:.2f}" if mean_val != 0.0 else "—")
+            mean_item = QTableWidgetItem(f"{mean_val:.2f}")
             mean_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 5, mean_item)
 
@@ -1740,6 +1864,9 @@ class App(QMainWindow):
         act_formula = QAction("Formula nutrizionale…", self)
         act_formula.triggered.connect(self._open_formula)
         pref_m.addAction(act_formula)
+        act_special = QAction("Valori speciali (-2 / -3)…", self)
+        act_special.triggered.connect(self._open_special_values)
+        pref_m.addAction(act_special)
 
         help_m = mb.addMenu("Aiuto")
         assert help_m is not None
@@ -1774,6 +1901,11 @@ class App(QMainWindow):
 
     def _open_formula(self):
         dlg = FormulaDialog(self, self.db)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.diary_tab.nutri_frame._refresh()
+
+    def _open_special_values(self):
+        dlg = SpecialValuesDialog(self, self.db)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.diary_tab.nutri_frame._refresh()
 
