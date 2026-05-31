@@ -1426,6 +1426,77 @@ def _compute_user_totals(db: "Database", user_code: str):
     return totals, missing
 
 
+# Colonne della tabella di ripartizione mNOVA.
+_MNOVA_COLS = ["1", "2", "3a", "3b", "3a+3b", "4a", "4b", "4a+4b"]
+
+
+def _compute_mnova_breakdown(db: "Database", user_code: str):
+    """Ripartizione per categoria mNOVA: grammi e kcal medi giornalieri.
+
+    Somma su tutti i giorni, divisa per il numero di giorni (DAYS).
+    Le voci senza BDA o senza valore NOVA sono escluse.
+
+    Returns:
+        grams – dict {colonna mNOVA: float}
+        kcal  – dict {colonna mNOVA: float}
+    """
+    try:
+        formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
+    except Exception:
+        formulas = {}
+    _default = "val * qty / 100"
+    _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
+    special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
+    cutoffs = _load_cutoffs(db)
+
+    grams = {c: 0.0 for c in _MNOVA_COLS}
+    kcal = {c: 0.0 for c in _MNOVA_COLS}
+
+    entries = db.get_entries(user_code)
+    bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
+    bda_cache = db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
+
+    for e in entries:
+        if not e["bda_food_id"] or e.get("nova") is None:
+            continue
+        bda = bda_cache.get(e["bda_food_id"])
+        if not bda:
+            continue
+        mnova = _compute_mnova(e["nova"], bda, cutoffs)  # "1".."4b" (o "3"/"4")
+        if not mnova:
+            continue
+        qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
+
+        # Grammi nutrizionali della singola voce → energia (kcal) della voce.
+        food_totals = {}
+        for col, val in bda.items():
+            if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
+                continue
+            try:
+                fval = float(val)
+                fval = special.get(fval, fval)
+                food_totals[col] = eval(formulas.get(col, _default), _safe,
+                                        {"val": fval, "qty": qty})
+            except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
+                pass
+        e_kcal = _compute_energy_kcal(food_totals)
+
+        if mnova in grams:                 # colonna esatta (1, 2, 3a, 3b, 4a, 4b)
+            grams[mnova] += qty
+            kcal[mnova] += e_kcal
+        if mnova.startswith("3"):          # colonna somma 3a+3b
+            grams["3a+3b"] += qty
+            kcal["3a+3b"] += e_kcal
+        elif mnova.startswith("4"):        # colonna somma 4a+4b
+            grams["4a+4b"] += qty
+            kcal["4a+4b"] += e_kcal
+
+    n = len(DAYS)
+    grams = {c: v / n for c, v in grams.items()}
+    kcal = {c: v / n for c, v in kcal.items()}
+    return grams, kcal
+
+
 class NutriSummaryFrame(QWidget):
     """Tab riepilogo: valori nutrizionali calcolati dalla BDA, per giorno."""
 
@@ -1458,6 +1529,26 @@ class NutriSummaryFrame(QWidget):
         hdr.setStretchLastSection(False)
         layout.addWidget(self.table)
 
+        # Tabella di ripartizione per categoria mNOVA (medie giornaliere)
+        self.mnova_lbl = QLabel("Ripartizione per categoria mNOVA (media giornaliera)")
+        self.mnova_lbl.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        layout.addWidget(self.mnova_lbl)
+
+        self.mnova_table = QTableWidget(3, len(_MNOVA_COLS) + 1)
+        self.mnova_table.setHorizontalHeaderLabels([""] + _MNOVA_COLS)
+        self.mnova_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.mnova_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.mnova_table.setMaximumHeight(130)
+        mvh = self.mnova_table.verticalHeader()
+        if mvh is not None:
+            mvh.setVisible(False)
+        mhdr = self.mnova_table.horizontalHeader()
+        assert mhdr is not None
+        mhdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for i in range(1, len(_MNOVA_COLS) + 1):
+            mhdr.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.mnova_table)
+
         self.warn_lbl = QLabel("")
         self.warn_lbl.setStyleSheet("color: darkorange;")
         self.warn_lbl.setWordWrap(True)
@@ -1470,6 +1561,7 @@ class NutriSummaryFrame(QWidget):
     def _refresh(self):
         self.table.clearContents()
         self.table.setRowCount(0)
+        self.mnova_table.clearContents()
         self.warn_lbl.setText("")
 
         if not self.user_code:
@@ -1570,12 +1662,39 @@ class NutriSummaryFrame(QWidget):
             for col_idx, it in enumerate(cells):
                 self.table.setItem(row, col_idx, it)
 
+        self._fill_mnova_table()
+
         warn_parts = [
             f"Giorno {d}: {missing[d]} voci senza BDA"
             for d in DAYS if missing[d] > 0
         ]
         if warn_parts:
             self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
+
+    def _fill_mnova_table(self):
+        """Popola la tabella di ripartizione per categoria mNOVA."""
+        grams, kcal = _compute_mnova_breakdown(self.db, self.user_code)
+        total_kcal = kcal["1"] + kcal["2"] + kcal["3a+3b"] + kcal["4a+4b"]
+
+        def _cell(text, bold=False, align_right=True):
+            it = QTableWidgetItem(text)
+            if align_right:
+                it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if bold:
+                f = QFont()
+                f.setBold(True)
+                it.setFont(f)
+            return it
+
+        row_defs = [
+            ("g/day",          lambda c: f"{grams[c]:.2f}"),
+            ("Kcal",           lambda c: f"{kcal[c]:.2f}"),
+            ("%Kcal/Kcaltot",  lambda c: f"{(kcal[c] / total_kcal * 100):.2f}%" if total_kcal else "0.00%"),
+        ]
+        for r, (label, fmt) in enumerate(row_defs):
+            self.mnova_table.setItem(r, 0, _cell(label, bold=True, align_right=False))
+            for i, col in enumerate(_MNOVA_COLS, start=1):
+                self.mnova_table.setItem(r, i, _cell(fmt(col)))
 
     def _compute_totals(self):
         assert self.user_code is not None
