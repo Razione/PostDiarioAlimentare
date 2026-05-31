@@ -257,29 +257,28 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
         lbl = QLabel(
             "Definisci i cutoff per mNOVA (NOVA 3 → 3a/3b, NOVA 4 → 4a/4b).\n"
-            "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'."
+            "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'.\n"
+            "Valori per 100 g. «Sale (g)» è derivato dal sodio: Sodio(mg) × 2.5 / 1000."
         )
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Nutriente (colonna BDA)", "Soglia"])
+        self._nutrients = _cutoff_options(self.db)
+        self.table = QTableWidget(len(self._nutrients), 2)
+        self.table.setHorizontalHeaderLabels(["Nutriente", "Soglia (per 100 g)"])
         hdr = self.table.horizontalHeader()
         assert hdr is not None
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        vh = self.table.verticalHeader()
+        if vh is not None:
+            vh.setVisible(False)
+        for row, name in enumerate(self._nutrients):
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, QTableWidgetItem(""))
         layout.addWidget(self.table)
-
-        btn_row = QHBoxLayout()
-        btn_add = QPushButton("+ Aggiungi")
-        btn_add.clicked.connect(self._add_row)
-        btn_row.addWidget(btn_add)
-        btn_del = QPushButton("Rimuovi")
-        btn_del.clicked.connect(self._remove_row)
-        btn_row.addWidget(btn_del)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -297,39 +296,21 @@ class PreferencesDialog(QDialog):
         ok_row.addWidget(btn_ok)
         layout.addLayout(ok_row)
 
-    def _cols(self):
-        return self.db.get_bda_columns() or []
-
-    def _add_row(self, col_name="", threshold=""):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        cb = QComboBox()
-        cb.addItems(self._cols())
-        if col_name:
-            idx = cb.findText(col_name)
-            if idx >= 0:
-                cb.setCurrentIndex(idx)
-        self.table.setCellWidget(row, 0, cb)
-        self.table.setItem(row, 1, QTableWidgetItem(str(threshold)))
-
-    def _remove_row(self):
-        rows = {idx.row() for idx in self.table.selectedIndexes()}
-        for r in sorted(rows, reverse=True):
-            self.table.removeRow(r)
-
     def _load(self):
-        for c in _load_cutoffs(self.db):
-            self._add_row(c.get("col", ""), c.get("threshold", ""))
+        saved = {c.get("col"): c.get("threshold") for c in _load_cutoffs(self.db)}
+        for row, name in enumerate(self._nutrients):
+            val = saved.get(name)
+            self.table.item(row, 1).setText("" if val is None else str(val))
 
     def _save(self):
         cutoffs = []
-        for row in range(self.table.rowCount()):
-            cb = self.table.cellWidget(row, 0)
+        for row, name in enumerate(self._nutrients):
             it = self.table.item(row, 1)
-            if not isinstance(cb, QComboBox) or it is None:
-                continue
+            raw = (it.text() if it else "").strip().replace(",", ".")
+            if not raw:
+                continue  # soglia vuota → cutoff disattivato per questo nutriente
             try:
-                cutoffs.append({"col": cb.currentText(), "threshold": float(it.text().replace(",", "."))})
+                cutoffs.append({"col": name, "threshold": float(raw)})
             except ValueError:
                 pass
         self.db.set_setting("mnova_cutoffs", json.dumps(cutoffs, ensure_ascii=False))
@@ -728,6 +709,52 @@ def _load_cutoffs(db) -> list:
         return []
 
 
+_SALT_LABEL = "Sale (g)"
+_SALT_SOURCE = ("Sodium", "Sodio")
+_SALT_FACTOR = 2.5 / 1000.0  # sodio (mg/100 g) → sale (g/100 g)
+
+# Nutrienti ammessi come cutoff mNOVA, nell'ordine di visualizzazione (per 100 g).
+# Una tupla = colonna BDA diretta (nomi accettati); _SALT_LABEL = derivato dal sodio.
+_CUTOFF_ORDER = [
+    ("Total fat", "Lipidi totali"),
+    ("Total saturated fatty acids", "Acidi grassi saturi totali"),
+    ("Soluble carbohydrates (MSE)", "Carboidrati solubili (MSE)"),
+    _SALT_LABEL,
+]
+
+
+def _cutoff_options(db) -> list:
+    """Nutrienti selezionabili come cutoff mNOVA, adattati ai nomi BDA presenti."""
+    cols = set(db.get_bda_columns() or [])
+    opts = []
+    for entry in _CUTOFF_ORDER:
+        if entry == _SALT_LABEL:
+            if any(n in cols for n in _SALT_SOURCE):
+                opts.append(_SALT_LABEL)
+        else:
+            col = next((n for n in entry if n in cols), None)
+            if col:
+                opts.append(col)
+    return opts
+
+
+def _cutoff_value(label, bda_data: dict):
+    """Valore del nutriente-cutoff (per 100 g) dalla riga BDA, o None."""
+    if not bda_data:
+        return None
+    if label == _SALT_LABEL:
+        src = next((bda_data[n] for n in _SALT_SOURCE if bda_data.get(n) is not None), None)
+        try:
+            return float(src) * _SALT_FACTOR if src is not None else None
+        except (TypeError, ValueError):
+            return None
+    v = bda_data.get(label)
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 # Configurazione percentuali di default: (nomi-colonna accettati, fattore).
 # Denominatore di default = energia totale del giorno.
 _PERCENT_DEFAULT_TERMS = [
@@ -805,12 +832,14 @@ def _compute_mnova(nova, bda_data: dict | None, cutoffs: list) -> str:
         return str(nova)
     if not bda_data or not cutoffs:
         return str(nova)
-    is_b = any(
-        c.get("col") and c.get("threshold") is not None
-        and bda_data.get(c["col"]) is not None
-        and float(bda_data[c["col"]]) > float(c["threshold"])
-        for c in cutoffs
-    )
+
+    def _exceeds(c):
+        if not c.get("col") or c.get("threshold") is None:
+            return False
+        val = _cutoff_value(c["col"], bda_data)
+        return val is not None and val > float(c["threshold"])
+
+    is_b = any(_exceeds(c) for c in cutoffs)
     return f"{nova}b" if is_b else f"{nova}a"
 
 
@@ -1431,14 +1460,13 @@ _MNOVA_COLS = ["1", "2", "3a", "3b", "3a+3b", "4a", "4b", "4a+4b"]
 
 
 def _compute_mnova_breakdown(db: "Database", user_code: str):
-    """Ripartizione per categoria mNOVA: grammi e kcal medi giornalieri.
+    """Ripartizione per categoria mNOVA: grammi e kcal per giorno e in media.
 
-    Somma su tutti i giorni, divisa per il numero di giorni (DAYS).
     Le voci senza BDA o senza valore NOVA sono escluse.
 
     Returns:
-        grams – dict {colonna mNOVA: float}
-        kcal  – dict {colonna mNOVA: float}
+        per_day – dict {day: (grams, kcal)}, con grams/kcal dict {colonna mNOVA: float}
+        media   – (grams, kcal): media giorno per giorno (somma ÷ numero di giorni)
     """
     try:
         formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
@@ -1449,8 +1477,8 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
     special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
     cutoffs = _load_cutoffs(db)
 
-    grams = {c: 0.0 for c in _MNOVA_COLS}
-    kcal = {c: 0.0 for c in _MNOVA_COLS}
+    grams = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
+    kcal = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
 
     entries = db.get_entries(user_code)
     bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
@@ -1462,6 +1490,7 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
         bda = bda_cache.get(e["bda_food_id"])
         if not bda:
             continue
+        day = e["day"]
         mnova = _compute_mnova(e["nova"], bda, cutoffs)  # "1".."4b" (o "3"/"4")
         if not mnova:
             continue
@@ -1481,20 +1510,22 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
                 pass
         e_kcal = _compute_energy_kcal(food_totals)
 
-        if mnova in grams:                 # colonna esatta (1, 2, 3a, 3b, 4a, 4b)
-            grams[mnova] += qty
-            kcal[mnova] += e_kcal
-        if mnova.startswith("3"):          # colonna somma 3a+3b
-            grams["3a+3b"] += qty
-            kcal["3a+3b"] += e_kcal
-        elif mnova.startswith("4"):        # colonna somma 4a+4b
-            grams["4a+4b"] += qty
-            kcal["4a+4b"] += e_kcal
+        def _add(cat):
+            grams[day][cat] += qty
+            kcal[day][cat] += e_kcal
 
+        if mnova in _MNOVA_COLS:           # colonna esatta (1, 2, 3a, 3b, 4a, 4b)
+            _add(mnova)
+        if mnova.startswith("3"):          # colonna somma 3a+3b
+            _add("3a+3b")
+        elif mnova.startswith("4"):        # colonna somma 4a+4b
+            _add("4a+4b")
+
+    per_day = {d: (grams[d], kcal[d]) for d in DAYS}
     n = len(DAYS)
-    grams = {c: v / n for c, v in grams.items()}
-    kcal = {c: v / n for c, v in kcal.items()}
-    return grams, kcal
+    media_g = {c: sum(grams[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
+    media_k = {c: sum(kcal[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
+    return per_day, (media_g, media_k)
 
 
 class NutriSummaryFrame(QWidget):
@@ -1520,48 +1551,69 @@ class NutriSummaryFrame(QWidget):
         top.addWidget(btn_refresh)
         layout.addLayout(top)
 
-        self.table = QTableWidget()
-        self.table.setAlternatingRowColors(True)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setStretchLastSection(False)
-        layout.addWidget(self.table)
+        # Una scheda per giorno (1-4) e una per la media sui 4.
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
 
-        # Tabella di ripartizione per categoria mNOVA (medie giornaliere)
-        self.mnova_lbl = QLabel("Ripartizione per categoria mNOVA (media giornaliera)")
-        self.mnova_lbl.setStyleSheet("font-weight: bold; margin-top: 6px;")
-        layout.addWidget(self.mnova_lbl)
+        self._scopes = list(DAYS) + ["media"]
+        self.nutri_tables = {}   # scope → QTableWidget nutrienti
+        self.mnova_tables = {}   # scope → QTableWidget mNOVA
+        for scope in self._scopes:
+            page = QWidget()
+            pl = QVBoxLayout(page)
+            pl.setContentsMargins(6, 6, 6, 6)
 
-        self.mnova_table = QTableWidget(3, len(_MNOVA_COLS) + 1)
-        self.mnova_table.setHorizontalHeaderLabels([""] + _MNOVA_COLS)
-        self.mnova_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.mnova_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.mnova_table.setMaximumHeight(130)
-        mvh = self.mnova_table.verticalHeader()
-        if mvh is not None:
-            mvh.setVisible(False)
-        mhdr = self.mnova_table.horizontalHeader()
-        assert mhdr is not None
-        mhdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        for i in range(1, len(_MNOVA_COLS) + 1):
-            mhdr.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.mnova_table)
+            nt = QTableWidget()
+            nt.setAlternatingRowColors(True)
+            nt.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            nt.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            nthdr = nt.horizontalHeader()
+            assert nthdr is not None
+            nthdr.setStretchLastSection(False)
+            self.nutri_tables[scope] = nt
+            pl.addWidget(nt, 1)
+
+            mlbl = QLabel("Ripartizione per categoria mNOVA")
+            mlbl.setStyleSheet("font-weight: bold; margin-top: 4px;")
+            pl.addWidget(mlbl)
+            pl.addWidget(self._make_mnova_table(scope))
+
+            title = "Media 4 giorni" if scope == "media" else f"Giorno {scope}"
+            self.tabs.addTab(page, title)
 
         self.warn_lbl = QLabel("")
         self.warn_lbl.setStyleSheet("color: darkorange;")
         self.warn_lbl.setWordWrap(True)
         layout.addWidget(self.warn_lbl)
 
+    def _make_mnova_table(self, key):
+        """Crea una tabella mNOVA (3 righe × categorie) per un giorno o la media."""
+        t = QTableWidget(3, len(_MNOVA_COLS) + 1)
+        t.setHorizontalHeaderLabels([""] + _MNOVA_COLS)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        t.setFixedHeight(118)
+        vh = t.verticalHeader()
+        if vh is not None:
+            vh.setVisible(False)
+        hdr = t.horizontalHeader()
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for i in range(1, len(_MNOVA_COLS) + 1):
+            hdr.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+        self.mnova_tables[key] = t
+        return t
+
     def load_user(self, user_code):
         self.user_code = user_code
         self._refresh()
 
     def _refresh(self):
-        self.table.clearContents()
-        self.table.setRowCount(0)
-        self.mnova_table.clearContents()
+        for t in self.nutri_tables.values():
+            t.clearContents()
+            t.setRowCount(0)
+        for t in self.mnova_tables.values():
+            t.clearContents()
         self.warn_lbl.setText("")
 
         if not self.user_code:
@@ -1592,75 +1644,16 @@ class NutriSummaryFrame(QWidget):
                        for c in _load_percent_config(self.db) if c.get("col")}
         show_pct = bool(percent_cfg)
 
-        # Energia (kcal) per giorno: denominatore di default delle percentuali.
-        energy_vals = [_compute_energy_kcal(totals[d]) for d in DAYS]
+        # Valori per scheda: ogni giorno e la media sui 4 (somma ÷ numero giorni).
+        n = len(DAYS)
+        scope_values = {d: totals[d] for d in DAYS}
+        scope_values["media"] = {
+            c: sum(totals[d].get(c, 0.0) for d in DAYS) / n for c in nutrient_cols
+        }
 
-        headers = ["Nutriente"]
-        for d in DAYS:
-            headers.append(f"Giorno {d}")
-            if show_pct:
-                headers.append("%")
-        headers.append("Media")
-        if show_pct:
-            headers.append("% media")
-
-        self.table.setColumnCount(len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, len(headers)):
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-
-        # Riga 0: energia totale (kcal); poi un nutriente per riga.
-        rows_data = [(ENERGY_LABEL, energy_vals, None, True)]
-        rows_data += [
-            (col_name, [totals[d].get(col_name, 0.0) for d in DAYS],
-             percent_cfg.get(col_name), False)
-            for col_name in nutrient_cols
-        ]
-
-        def _num_item(text, bold):
-            it = QTableWidgetItem(text)
-            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if bold:
-                f = QFont()
-                f.setBold(True)
-                it.setFont(f)
-            return it
-
-        self.table.setRowCount(len(rows_data))
-        for row, (label, day_vals, cfg, bold) in enumerate(rows_data):
-            filled = [v for v in day_vals if v != 0.0]
-            mean_val = sum(filled) / len(filled) if filled else 0.0
-
-            # % per giorno = valore * fattore / denominatore del giorno * 100.
-            # denom vuoto → energia totale del giorno, altrimenti totale di quel nutriente.
-            factor, denom = cfg if cfg else (None, "")
-            denom_vals = energy_vals if not denom else [totals[d].get(denom, 0.0) for d in DAYS]
-            pct_vals = [
-                (dv * factor / den * 100.0) if (factor is not None and den) else None
-                for dv, den in zip(day_vals, denom_vals)
-            ]
-            pct_filled = [p for p in pct_vals if p is not None]
-            pct_mean = sum(pct_filled) / len(pct_filled) if pct_filled else None
-
-            name_item = QTableWidgetItem(str(label))
-            if bold:
-                f = QFont()
-                f.setBold(True)
-                name_item.setFont(f)
-            cells = [name_item]
-            for val, pct in zip(day_vals, pct_vals):
-                cells.append(_num_item(f"{val:.2f}", bold))
-                if show_pct:
-                    cells.append(_num_item("" if pct is None else f"{pct:.2f}%", bold))
-            cells.append(_num_item(f"{mean_val:.2f}", bold))
-            if show_pct:
-                cells.append(_num_item("" if pct_mean is None else f"{pct_mean:.2f}%", bold))
-
-            for col_idx, it in enumerate(cells):
-                self.table.setItem(row, col_idx, it)
+        for scope in self._scopes:
+            self._fill_nutri_table(self.nutri_tables[scope], scope_values[scope],
+                                   nutrient_cols, percent_cfg, show_pct)
 
         self._fill_mnova_table()
 
@@ -1671,9 +1664,57 @@ class NutriSummaryFrame(QWidget):
         if warn_parts:
             self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
 
+    def _fill_nutri_table(self, table, values, nutrient_cols, percent_cfg, show_pct):
+        """Popola una tabella nutrienti (Nutriente | Valore | %) per uno scope."""
+        headers = ["Nutriente", "Valore"] + (["%"] if show_pct else [])
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        hdr = table.horizontalHeader()
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in range(1, len(headers)):
+            hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+
+        energy = _compute_energy_kcal(values)
+        rows_data = [(ENERGY_LABEL, energy, None, True)]
+        rows_data += [(col, values.get(col, 0.0), percent_cfg.get(col), False)
+                      for col in nutrient_cols]
+
+        def _num_item(text, bold):
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if bold:
+                f = QFont()
+                f.setBold(True)
+                it.setFont(f)
+            return it
+
+        table.setRowCount(len(rows_data))
+        for row, (label, val, cfg, bold) in enumerate(rows_data):
+            # % = valore * fattore / denominatore * 100 (denom vuoto → energia)
+            factor, denom = cfg if cfg else (None, "")
+            den = energy if not denom else values.get(denom, 0.0)
+            pct = (val * factor / den * 100.0) if (factor is not None and den) else None
+
+            name_item = QTableWidgetItem(str(label))
+            if bold:
+                f = QFont()
+                f.setBold(True)
+                name_item.setFont(f)
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, _num_item(f"{val:.2f}", bold))
+            if show_pct:
+                table.setItem(row, 2, _num_item("" if pct is None else f"{pct:.2f}%", bold))
+
     def _fill_mnova_table(self):
-        """Popola la tabella di ripartizione per categoria mNOVA."""
-        grams, kcal = _compute_mnova_breakdown(self.db, self.user_code)
+        """Popola le tabelle di ripartizione mNOVA (un giorno per tabella + media)."""
+        per_day, media = _compute_mnova_breakdown(self.db, self.user_code)
+        data = {d: per_day[d] for d in DAYS}
+        data["media"] = media
+        for key, (grams, kcal) in data.items():
+            self._fill_one_mnova(self.mnova_tables[key], grams, kcal)
+
+    def _fill_one_mnova(self, table, grams, kcal):
         total_kcal = kcal["1"] + kcal["2"] + kcal["3a+3b"] + kcal["4a+4b"]
 
         def _cell(text, bold=False, align_right=True):
@@ -1692,9 +1733,9 @@ class NutriSummaryFrame(QWidget):
             ("%Kcal/Kcaltot",  lambda c: f"{(kcal[c] / total_kcal * 100):.2f}%" if total_kcal else "0.00%"),
         ]
         for r, (label, fmt) in enumerate(row_defs):
-            self.mnova_table.setItem(r, 0, _cell(label, bold=True, align_right=False))
+            table.setItem(r, 0, _cell(label, bold=True, align_right=False))
             for i, col in enumerate(_MNOVA_COLS, start=1):
-                self.mnova_table.setItem(r, i, _cell(fmt(col)))
+                table.setItem(r, i, _cell(fmt(col)))
 
     def _compute_totals(self):
         assert self.user_code is not None
