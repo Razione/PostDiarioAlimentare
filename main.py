@@ -258,18 +258,23 @@ class PreferencesDialog(QDialog):
         lbl = QLabel(
             "Definisci i cutoff per mNOVA (NOVA 3 → 3a/3b, NOVA 4 → 4a/4b).\n"
             "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'.\n"
-            "Valori per 100 g. «Sale (g)» è derivato dal sodio: Sodio(mg) × 2.5 / 1000."
+            "Soglie distinte per <b>cibo</b> e <b>bevanda</b> (quali categorie sono "
+            "bevande si imposta in «Preferenze → Bevande»). Valori per 100 g · "
+            "«Sale (g)» = Sodio(mg) × 2.5 / 1000."
         )
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
         self._nutrients = _cutoff_options(self.db)
-        self.table = QTableWidget(len(self._nutrients), 2)
-        self.table.setHorizontalHeaderLabels(["Nutriente", "Soglia (per 100 g)"])
+        self.table = QTableWidget(len(self._nutrients), 3)
+        self.table.setHorizontalHeaderLabels(
+            ["Nutriente", "Soglia cibo", "Soglia bevanda"]
+        )
         hdr = self.table.horizontalHeader()
         assert hdr is not None
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         vh = self.table.verticalHeader()
         if vh is not None:
             vh.setVisible(False)
@@ -278,6 +283,7 @@ class PreferencesDialog(QDialog):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, QTableWidgetItem(""))
+            self.table.setItem(row, 2, QTableWidgetItem(""))
         layout.addWidget(self.table)
 
         sep = QFrame()
@@ -297,23 +303,30 @@ class PreferencesDialog(QDialog):
         layout.addLayout(ok_row)
 
     def _load(self):
-        saved = {c.get("col"): c.get("threshold") for c in _load_cutoffs(self.db)}
+        cfg = _load_mnova_config(self.db)
+        food = {c.get("col"): c.get("threshold") for c in cfg["food"]}
+        bev = {c.get("col"): c.get("threshold") for c in cfg["beverage"]}
         for row, name in enumerate(self._nutrients):
-            val = saved.get(name)
-            self.table.item(row, 1).setText("" if val is None else str(val))
+            fv, bv = food.get(name), bev.get(name)
+            self.table.item(row, 1).setText("" if fv is None else str(fv))
+            self.table.item(row, 2).setText("" if bv is None else str(bv))
 
     def _save(self):
-        cutoffs = []
+        food, beverage = [], []
         for row, name in enumerate(self._nutrients):
-            it = self.table.item(row, 1)
-            raw = (it.text() if it else "").strip().replace(",", ".")
-            if not raw:
-                continue  # soglia vuota → cutoff disattivato per questo nutriente
-            try:
-                cutoffs.append({"col": name, "threshold": float(raw)})
-            except ValueError:
-                pass
-        self.db.set_setting("mnova_cutoffs", json.dumps(cutoffs, ensure_ascii=False))
+            for col_idx, bucket in ((1, food), (2, beverage)):
+                it = self.table.item(row, col_idx)
+                raw = (it.text() if it else "").strip().replace(",", ".")
+                if not raw:
+                    continue  # soglia vuota → cutoff disattivato per questo nutriente
+                try:
+                    bucket.append({"col": name, "threshold": float(raw)})
+                except ValueError:
+                    pass
+        self.db.set_setting(
+            "mnova_cutoffs",
+            json.dumps({"food": food, "beverage": beverage}, ensure_ascii=False),
+        )
         self.accept()
 
 
@@ -637,6 +650,101 @@ class PercentDialog(QDialog):
         self.accept()
 
 
+class BeverageCategoriesDialog(QDialog):
+    """Preferenze: marca quali categorie merceologiche sono bevande (cutoff mNOVA)."""
+
+    def __init__(self, parent, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Preferenze – Bevande")
+        self.resize(560, 520)
+        self._build()
+        self._load()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        lbl = QLabel(
+            "Seleziona le categorie merceologiche che sono <b>bevande</b>: a queste "
+            "vengono applicati i cutoff mNOVA «bevanda». Tutto il resto è trattato "
+            "come cibo."
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        self._cat_rows = self._cats()
+        if not self._cat_rows:
+            warn = QLabel("Nessuna categoria disponibile: carica una BDA che includa "
+                          "il foglio delle categorie merceologiche.")
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: darkorange;")
+            layout.addWidget(warn)
+        else:
+            search = QLineEdit()
+            search.setPlaceholderText("Filtra categoria…")
+            search.textChanged.connect(self._filter)
+            layout.addWidget(search)
+
+        self.list = QListWidget()
+        for code, rec in self._cat_rows:
+            macro = rec.get("macro_name_it") or ""
+            label = f"{macro} › {rec.get('name_it') or code}" if macro else (rec.get("name_it") or code)
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            self.list.addItem(item)
+        layout.addWidget(self.list)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(sep)
+
+        ok_row = QHBoxLayout()
+        ok_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        ok_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self._save)
+        btn_ok.setDefault(True)
+        ok_row.addWidget(btn_ok)
+        layout.addLayout(ok_row)
+
+    def _cats(self):
+        """Sotto-categorie ordinate per macro e nome."""
+        m = self.db.get_categories_map()
+        subs = [(c, r) for c, r in m.items() if r.get("macro_code") != c]
+        subs.sort(key=lambda t: ((t[1].get("macro_name_it") or ""),
+                                 (t[1].get("name_it") or "")))
+        return subs
+
+    def _filter(self, text):
+        q = text.strip().lower()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _load(self):
+        try:
+            saved = {str(c) for c in json.loads(self.db.get_setting("beverage_categories", "[]"))}
+        except Exception:
+            saved = set()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) in saved:
+                it.setCheckState(Qt.CheckState.Checked)
+
+    def _save(self):
+        codes = [
+            self.list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.list.count())
+            if self.list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+        self.db.set_setting("beverage_categories", json.dumps(codes, ensure_ascii=False))
+        self.accept()
+
+
 class DiaryImportDialog(QDialog):
     def __init__(self, parent, df: pd.DataFrame):
         super().__init__(parent)
@@ -765,12 +873,46 @@ def _food_category_name(cat_map: dict, cm_value) -> str:
     return rec["name_it"] if rec else ""
 
 
-def _load_cutoffs(db) -> list:
-    """Carica i cutoff mNOVA dal DB (lista di {'col': str, 'threshold': float})."""
+def _load_mnova_config(db) -> dict:
+    """Configurazione mNOVA: cutoff distinti per cibo e bevanda + categorie bevanda.
+
+    Returns {'food': [...], 'beverage': [...], 'beverage_cats': set,
+             'code_to_macro': {code: macro_code}}.
+    Compatibile col vecchio formato (lista semplice = cutoff del cibo).
+    """
     try:
-        return json.loads(db.get_setting("mnova_cutoffs", "[]"))
+        data = json.loads(db.get_setting("mnova_cutoffs", "[]"))
     except Exception:
-        return []
+        data = []
+    if isinstance(data, list):           # vecchio formato → solo cibo
+        food, beverage = data, []
+    else:
+        food = data.get("food", [])
+        beverage = data.get("beverage", [])
+    try:
+        bev_cats = {str(c) for c in json.loads(db.get_setting("beverage_categories", "[]"))}
+    except Exception:
+        bev_cats = set()
+    code_to_macro = {}
+    if bev_cats:
+        try:
+            code_to_macro = {c: r.get("macro_code")
+                             for c, r in db.get_categories_map().items()}
+        except Exception:
+            code_to_macro = {}
+    return {"food": food, "beverage": beverage,
+            "beverage_cats": bev_cats, "code_to_macro": code_to_macro}
+
+
+def _is_beverage(bda_data: dict, config: dict) -> bool:
+    """True se l'alimento appartiene a una categoria marcata come bevanda."""
+    cats = config.get("beverage_cats")
+    if not cats or not bda_data:
+        return False
+    code = _category_code(bda_data.get("Categoria Merceologica"))
+    if code in cats:
+        return True
+    return config.get("code_to_macro", {}).get(code) in cats
 
 
 _SALT_LABEL = "Sale (g)"
@@ -887,14 +1029,22 @@ def _load_special_values(db) -> dict:
     return out
 
 
-def _compute_mnova(nova, bda_data: dict | None, cutoffs: list) -> str:
+def _compute_mnova(nova, bda_data: dict | None, config: dict) -> str:
     """Calcola l'etichetta mNOVA.
-    NOVA 1/2 → uguale a NOVA; NOVA 3/4 → 'a' o 'b' in base ai cutoff."""
+
+    NOVA 1/2 → uguale a NOVA; NOVA 3/4 → 'a' o 'b' in base ai cutoff.
+    Usa i cutoff 'beverage' se l'alimento è in una categoria-bevanda,
+    altrimenti quelli 'food'. `config` = output di _load_mnova_config.
+    """
     if nova is None:
         return ""
     if nova in (1, 2):
         return str(nova)
-    if not bda_data or not cutoffs:
+    if not bda_data or not config:
+        return str(nova)
+
+    cutoffs = config["beverage"] if _is_beverage(bda_data, config) else config["food"]
+    if not cutoffs:
         return str(nova)
 
     def _exceeds(c):
@@ -1353,14 +1503,14 @@ class DayFrame(QWidget):
         )
         bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
         bda_cache = self.db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
-        cutoffs = _load_cutoffs(self.db)
+        mnova_cfg = _load_mnova_config(self.db)
 
         for e in entries:
             nova = e.get("nova")
             bda_data = bda_cache.get(e["bda_food_id"]) if e.get("bda_food_id") else None
             resolved = bda_data is not None                 # associazione valida
             orphaned = bool(e.get("bda_food_id")) and not resolved  # link rotto
-            mnova = _compute_mnova(nova, bda_data, cutoffs)
+            mnova = _compute_mnova(nova, bda_data, mnova_cfg)
             item = QTreeWidgetItem([
                 e["meal"],
                 e.get("ora") or "",
@@ -1491,7 +1641,7 @@ class DayFrame(QWidget):
                 None,
             )
             bda_data = self.db.get_bda_food(entry_bda_id) if entry_bda_id else None
-            mnova = _compute_mnova(nova, bda_data, _load_cutoffs(self.db))
+            mnova = _compute_mnova(nova, bda_data, _load_mnova_config(self.db))
             self.tree.blockSignals(True)
             item.setText(self._nova_col, str(nova) if nova is not None else "—")
             item.setText(self._mnova_col, mnova or "—")
@@ -1597,7 +1747,7 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
     _default = "val * qty / 100"
     _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
     special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
-    cutoffs = _load_cutoffs(db)
+    mnova_cfg = _load_mnova_config(db)
 
     grams = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
     kcal = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
@@ -1613,7 +1763,7 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
         if not bda:
             continue
         day = e["day"]
-        mnova = _compute_mnova(e["nova"], bda, cutoffs)  # "1".."4b" (o "3"/"4")
+        mnova = _compute_mnova(e["nova"], bda, mnova_cfg)  # "1".."4b" (o "3"/"4")
         if not mnova:
             continue
         qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
@@ -2457,6 +2607,9 @@ class App(QMainWindow):
         act_mnova = QAction("Cutoff mNOVA…", self)
         act_mnova.triggered.connect(self._open_preferences)
         pref_m.addAction(act_mnova)
+        act_bev = QAction("Bevande (categorie)…", self)
+        act_bev.triggered.connect(self._open_beverages)
+        pref_m.addAction(act_bev)
         act_formula = QAction("Formula nutrizionale…", self)
         act_formula.triggered.connect(self._open_formula)
         pref_m.addAction(act_formula)
@@ -2494,6 +2647,12 @@ class App(QMainWindow):
 
     def _open_preferences(self):
         dlg = PreferencesDialog(self, self.db)
+        if dlg.exec() == QDialog.DialogCode.Accepted and self.diary_tab.current_user:
+            row = self.diary_tab.user_list.currentRow()
+            self.diary_tab._on_user_change(row)
+
+    def _open_beverages(self):
+        dlg = BeverageCategoriesDialog(self, self.db)
         if dlg.exec() == QDialog.DialogCode.Accepted and self.diary_tab.current_user:
             row = self.diary_tab.user_list.currentRow()
             self.diary_tab._on_user_change(row)
