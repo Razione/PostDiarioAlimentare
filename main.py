@@ -24,7 +24,8 @@ from PyQt6.QtGui import QColor, QFont, QAction
 from database import Database
 
 from constants import (
-    MEALS, MEAL_ORDER, DAYS, APP_TITLE, ENERGY_LABEL, _MNOVA_COLS,
+    MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
+    ENERGY_LABEL, _MNOVA_COLS,
     _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
     _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
     _category_code, _load_mnova_config, _compute_mnova,
@@ -1376,6 +1377,23 @@ class App(QMainWindow):
         act_bda.triggered.connect(lambda: (self.nb.setCurrentIndex(0), self.bda_tab._load_bda()))
         file_m.addAction(act_bda)
         file_m.addSeparator()
+
+        act_exp_cfg = QAction("Esporta configurazione…", self)
+        act_exp_cfg.triggered.connect(self._export_config)
+        file_m.addAction(act_exp_cfg)
+        act_imp_cfg = QAction("Importa configurazione…", self)
+        act_imp_cfg.triggered.connect(self._import_config)
+        file_m.addAction(act_imp_cfg)
+        file_m.addSeparator()
+
+        act_exp_prj = QAction("Esporta progetto…", self)
+        act_exp_prj.triggered.connect(self._export_project)
+        file_m.addAction(act_exp_prj)
+        act_imp_prj = QAction("Importa progetto…", self)
+        act_imp_prj.triggered.connect(self._import_project)
+        file_m.addAction(act_imp_prj)
+        file_m.addSeparator()
+
         act_exit = QAction("Esci", self)
         act_exit.triggered.connect(self.close)
         file_m.addAction(act_exit)
@@ -1449,6 +1467,144 @@ class App(QMainWindow):
         dlg = PercentDialog(self, self.db)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.diary_tab.nutri_frame._refresh()
+
+    # ── Import / Export ───────────────────────────────────────────────────
+
+    def _refresh_all(self):
+        """Ricarica tutte le tab dopo un import."""
+        self.bda_tab._refresh_view()
+        self.users_tab._refresh(notify=False)
+        self.diary_tab.refresh_users()
+
+    def _read_export_file(self, path):
+        """Legge e valida un file di export. Ritorna il dict o None (con avviso)."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Errore lettura file", str(exc))
+            return None
+        if not isinstance(data, dict) or data.get("format") != EXPORT_FORMAT:
+            QMessageBox.warning(
+                self, "File non valido",
+                "Il file selezionato non è un export di Diario Alimentare.",
+            )
+            return None
+        return data
+
+    def _write_json(self, path, payload):
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            QMessageBox.critical(self, "Errore salvataggio", str(exc))
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        return True
+
+    def _export_config(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Esporta configurazione", "configurazione.json", "JSON (*.json)")
+        if not path:
+            return
+        settings = self.db.get_all_settings()
+        payload = {"format": EXPORT_FORMAT, "kind": "config",
+                   "version": EXPORT_VERSION, "settings": settings}
+        if self._write_json(path, payload):
+            QMessageBox.information(
+                self, "Configurazione esportata",
+                f"{len(settings)} preferenze salvate in:\n{path}")
+
+    def _import_config(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importa configurazione", "", "JSON (*.json);;Tutti i file (*.*)")
+        if not path:
+            return
+        data = self._read_export_file(path)
+        if data is None:
+            return
+        settings = data.get("settings")
+        if not isinstance(settings, dict) or not settings:
+            QMessageBox.warning(self, "Niente da importare",
+                                "Il file non contiene una configurazione.")
+            return
+        self.db.import_settings(settings)
+        self._refresh_all()
+        QMessageBox.information(self, "Configurazione importata",
+                                f"{len(settings)} preferenze applicate.")
+
+    def _export_project(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Esporta progetto", "progetto.json", "JSON (*.json)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            data = self.db.export_data(include_work=True, include_settings=True,
+                                       include_bda=True)
+        finally:
+            QApplication.restoreOverrideCursor()
+        payload = {"format": EXPORT_FORMAT, "kind": "project",
+                   "version": EXPORT_VERSION, **data}
+        if self._write_json(path, payload):
+            QMessageBox.information(
+                self, "Progetto esportato",
+                f"Esportati {len(data.get('users', [])):,} utenti, "
+                f"{len(data.get('diary_entries', [])):,} voci di diario e "
+                f"{len(data.get('bda_foods', [])):,} alimenti BDA in:\n{path}")
+
+    def _import_project(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importa progetto", "", "JSON (*.json);;Tutti i file (*.*)")
+        if not path:
+            return
+        data = self._read_export_file(path)
+        if data is None:
+            return
+
+        n_users = len(data.get("users", []))
+        n_entries = len(data.get("diary_entries", []))
+        has_bda = "bda_foods" in data
+        has_cfg = "settings" in data
+        parts = [f"{n_users} utenti", f"{n_entries} voci di diario"]
+        if has_bda:
+            parts.append(f"{len(data['bda_foods']):,} alimenti BDA")
+        if has_cfg:
+            parts.append("la configurazione")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Importa progetto")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("Il file contiene " + ", ".join(parts) + ".")
+        box.setInformativeText(
+            "<b>Sostituisci tutto</b>: rimpiazza i dati attuali con quelli del file"
+            + (" (BDA e configurazione comprese)." if has_bda or has_cfg else ".")
+            + "<br><b>Unisci</b>: aggiunge gli utenti del file a quelli esistenti "
+            "(i codici già presenti vengono rinominati); non tocca BDA né configurazione."
+        )
+        btn_replace = box.addButton("Sostituisci tutto", QMessageBox.ButtonRole.DestructiveRole)
+        btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is btn_replace:
+            self.db.replace_project(data)
+            self._refresh_all()
+            QMessageBox.information(self, "Progetto importato",
+                                    "I dati attuali sono stati sostituiti.")
+        elif clicked is btn_merge:
+            rep = self.db.merge_project(data)
+            self._refresh_all()
+            msg = f"Aggiunti {len(rep['added'])} utenti."
+            if rep["renamed"]:
+                msg += ("\n\nRinominati (codice già esistente):\n  "
+                        + "\n  ".join(f"{o} → {n}" for o, n in rep["renamed"].items()))
+            msg += ("\n\nSe gli alimenti non risultano associati, usa "
+                    "«Verifica / riassegna BDA».")
+            QMessageBox.information(self, "Progetto importato", msg)
 
     def _about(self):
         QMessageBox.information(

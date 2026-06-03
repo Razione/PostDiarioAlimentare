@@ -458,3 +458,137 @@ class Database:
         with self._conn() as conn:
             r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return r["value"] if r else default
+
+    def get_all_settings(self) -> dict:
+        with self._conn() as conn:
+            return {r["key"]: r["value"]
+                    for r in conn.execute("SELECT key, value FROM settings")}
+
+    # ── Import / Export ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _dump_table(conn, table):
+        return [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+
+    @staticmethod
+    def _insert_rows(conn, table, rows):
+        """Inserisce righe-dict preservando le colonne presenti (e gli id)."""
+        for row in rows:
+            cols = list(row.keys())
+            if not cols:
+                continue
+            conn.execute(
+                f"INSERT INTO {table} ({','.join(cols)}) "
+                f"VALUES ({','.join('?' * len(cols))})",
+                [row[c] for c in cols],
+            )
+
+    def export_data(self, include_work=True, include_settings=True,
+                    include_bda=False) -> dict:
+        """Serializza il contenuto del DB in un dict pronto per JSON.
+
+        include_work     – utenti, voci di diario, etichette dei giorni;
+        include_settings – tutte le preferenze (tabella settings);
+        include_bda      – banca dati alimenti + categorie merceologiche.
+        """
+        data = {}
+        with self._conn() as conn:
+            if include_settings:
+                data["settings"] = {
+                    r["key"]: r["value"]
+                    for r in conn.execute("SELECT key, value FROM settings")
+                }
+            if include_work:
+                data["users"] = self._dump_table(conn, "users")
+                data["diary_entries"] = self._dump_table(conn, "diary_entries")
+                data["diary_day_meta"] = self._dump_table(conn, "diary_day_meta")
+            if include_bda:
+                data["bda_foods"] = self._dump_table(conn, "bda_foods")
+                data["bda_categories"] = self._dump_table(conn, "bda_categories")
+        return data
+
+    def import_settings(self, settings: dict):
+        """Applica le preferenze del file (le chiavi presenti sovrascrivono)."""
+        with self._conn() as conn:
+            for k, v in settings.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)",
+                    (k, None if v is None else str(v)),
+                )
+
+    def replace_project(self, data: dict):
+        """Sostituisce col contenuto del file ciò che il file contiene.
+
+        Lavoro, settings e BDA vengono rimpiazzati solo se presenti nel file.
+        Gli id (diary_entries.id, bda_foods.id) sono preservati così che le
+        associazioni del diario restino valide.
+        """
+        with self._conn() as conn:
+            if "users" in data or "diary_entries" in data or "diary_day_meta" in data:
+                conn.execute("DELETE FROM diary_entries")
+                conn.execute("DELETE FROM diary_day_meta")
+                conn.execute("DELETE FROM users")
+                self._insert_rows(conn, "users", data.get("users", []))
+                self._insert_rows(conn, "diary_day_meta", data.get("diary_day_meta", []))
+                self._insert_rows(conn, "diary_entries", data.get("diary_entries", []))
+            if "settings" in data:
+                conn.execute("DELETE FROM settings")
+                for k, v in data["settings"].items():
+                    conn.execute(
+                        "INSERT INTO settings (key, value) VALUES (?,?)",
+                        (k, None if v is None else str(v)),
+                    )
+            if "bda_foods" in data:
+                conn.execute("DELETE FROM bda_foods")
+                self._insert_rows(conn, "bda_foods", data["bda_foods"])
+            if "bda_categories" in data:
+                conn.execute("DELETE FROM bda_categories")
+                self._insert_rows(conn, "bda_categories", data["bda_categories"])
+        self._bda_columns_cache = None
+
+    def merge_project(self, data: dict) -> dict:
+        """Aggiunge gli utenti del file (col loro diario) ai dati esistenti.
+
+        I codici utente già presenti vengono rinominati ('codice (2)', …) per
+        non sovrascrivere. Non tocca settings né BDA: per ri-agganciare gli
+        alimenti usa poi «Verifica / riassegna BDA».
+        Returns {'added': [nuovi codici], 'renamed': {vecchio: nuovo}}.
+        """
+        report = {"added": [], "renamed": {}}
+        with self._conn() as conn:
+            existing = {r["code"] for r in conn.execute("SELECT code FROM users")}
+            mapping = {}
+            for u in data.get("users", []):
+                old = u.get("code")
+                if old is None:
+                    continue
+                new, n = old, 2
+                while new in existing:
+                    new = f"{old} ({n})"
+                    n += 1
+                existing.add(new)
+                mapping[old] = new
+                conn.execute("INSERT INTO users (code, notes) VALUES (?,?)",
+                             (new, u.get("notes", "")))
+                report["added"].append(new)
+                if new != old:
+                    report["renamed"][old] = new
+
+            for m in data.get("diary_day_meta", []):
+                uc = mapping.get(m.get("user_code"))
+                if uc is None:
+                    continue
+                conn.execute(
+                    "INSERT OR REPLACE INTO diary_day_meta "
+                    "(user_code, day, date_label) VALUES (?,?,?)",
+                    (uc, m.get("day"), m.get("date_label", "")),
+                )
+
+            for e in data.get("diary_entries", []):
+                uc = mapping.get(e.get("user_code"))
+                if uc is None:
+                    continue
+                row = {k: v for k, v in e.items() if k != "id"}  # id auto-assegnato
+                row["user_code"] = uc
+                self._insert_rows(conn, "diary_entries", [row])
+        return report

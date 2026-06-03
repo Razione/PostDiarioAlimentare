@@ -14,6 +14,10 @@ MEAL_ORDER = {m: i for i, m in enumerate(MEALS)}
 DAYS = [1, 2, 3, 4]
 APP_TITLE = "Analizzatore Diari Alimentari"
 
+# Marcatore dei file di export/import (configurazione e progetto)
+EXPORT_FORMAT = "diario-alimentare"
+EXPORT_VERSION = 1
+
 # Struttura del Content Export: offset rispetto alla colonna "Data" di ciascun giorno
 # (meal_name, offset_primo_alimento, numero_max_alimenti)
 _CONTENT_EXPORT_MEALS = [
