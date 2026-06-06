@@ -219,9 +219,10 @@ class PreferencesDialog(QDialog):
     def _build(self):
         layout = QVBoxLayout(self)
         lbl = QLabel(
-            "Definisci i cutoff per mNOVA (NOVA 3 → 3a/3b, NOVA 4 → 4a/4b).\n"
-            "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'.\n"
-            "Soglie distinte per <b>cibo</b> e <b>bevanda</b> (quali categorie sono "
+            "Definisci i cutoff per mNOVA.\n"
+            "valore Nutriente >  soglia → variante 'b' (es. 3b / 4b)\n"
+            "valore Nutriente <= soglia → variante 'a' (es. 3a / 4a)\n"
+            "Soglie distinte per cibo e bevanda (quali categorie sono "
             "bevande si imposta in «Preferenze → Bevande»). Valori per 100 g · "
             "«Sale (g)» = Sodio(mg) × 2.5 / 1000."
         )
@@ -525,7 +526,8 @@ class PercentDialog(QDialog):
         assert hdr is not None
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(2, 170)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
@@ -573,6 +575,10 @@ class PercentDialog(QDialog):
         self.table.setItem(row, 1, QTableWidgetItem(str(factor)))
 
         dcb = QComboBox()
+        # Non lasciare che i nomi lunghi dei nutrienti dilatino la colonna:
+        # la combo resta compatta, il menu a tendina mostra comunque il testo intero.
+        dcb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        dcb.setMinimumContentsLength(12)
         dcb.addItem(self._ENERGY_DENOM_LABEL, "")  # data "" = energia totale del giorno
         for c in self._cols():
             dcb.addItem(c, c)
@@ -643,14 +649,15 @@ class BeverageCategoriesDialog(QDialog):
             layout.addWidget(warn)
         else:
             search = QLineEdit()
-            search.setPlaceholderText("Filtra categoria…")
+            search.setPlaceholderText("Filtra per codice o nome…")
             search.textChanged.connect(self._filter)
             layout.addWidget(search)
 
         self.list = QListWidget()
         for code, rec in self._cat_rows:
             macro = rec.get("macro_name_it") or ""
-            label = f"{macro} › {rec.get('name_it') or code}" if macro else (rec.get("name_it") or code)
+            name = rec.get("name_it") or code
+            label = f"[{code}] {macro} › {name}" if macro else f"[{code}] {name}"
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)

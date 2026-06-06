@@ -1374,7 +1374,7 @@ class App(QMainWindow):
         file_m = mb.addMenu("File")
         assert file_m is not None
         act_bda = QAction("Carica BDA da Excel", self)
-        act_bda.triggered.connect(lambda: (self.nb.setCurrentIndex(0), self.bda_tab._load_bda()))
+        act_bda.triggered.connect(lambda: (self.nb.setCurrentWidget(self.bda_tab), self.bda_tab._load_bda()))
         file_m.addAction(act_bda)
         file_m.addSeparator()
 
@@ -1427,19 +1427,19 @@ class App(QMainWindow):
         self.setCentralWidget(self.nb)
 
         self.bda_tab = BDATab(self.db)
-        self.nb.addTab(self.bda_tab, "  BDA  ")
-
         self.users_tab = UsersTab(
             self.db,
             on_change=lambda: self.diary_tab.refresh_users() if hasattr(self, "diary_tab") else None,
         )
-        self.nb.addTab(self.users_tab, "  Utenti  ")
-
         self.diary_tab = DiaryTab(
             self.db,
             on_change=lambda: self.users_tab._refresh(notify=False),
         )
+
+        # Ordine schede: Diari, BDA, Utenti
         self.nb.addTab(self.diary_tab, "  Diari  ")
+        self.nb.addTab(self.bda_tab, "  BDA  ")
+        self.nb.addTab(self.users_tab, "  Utenti  ")
 
     def _open_preferences(self):
         dlg = PreferencesDialog(self, self.db)
