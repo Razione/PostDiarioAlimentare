@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Analizzatore Diari Alimentari
+Analisi Diari Alimentari
 Lancia con:  python main.py
 """
 
