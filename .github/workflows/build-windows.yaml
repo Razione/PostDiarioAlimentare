@@ -11,6 +11,9 @@ jobs:
     name: Build Windows app
     runs-on: windows-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,3 +50,9 @@ jobs:
           name: DiarioAlimentare-Windows
           path: dist/DiarioAlimentare-Windows.zip
           retention-days: 30
+
+      - name: Publish to Release (on tag)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.zip-final.outputs.artifact_exists == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DiarioAlimentare-Windows.zip
