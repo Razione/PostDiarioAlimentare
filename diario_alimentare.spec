@@ -4,6 +4,7 @@ import sys
 
 block_cipher = None
 _is_mac = sys.platform == 'darwin'
+_icon = 'icon.icns' if _is_mac else 'icon.ico'
 
 a = Analysis(
     ['main.py'],
@@ -11,6 +12,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('database.py', '.'),
+        ('icon.png', '.'),
     ],
     hiddenimports=[
         'openpyxl',
@@ -58,6 +60,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_icon,
 )
 
 if _is_mac:
@@ -67,6 +70,7 @@ if _is_mac:
         a.zipfiles,
         a.datas,
         name='DiarioAlimentare.app',
+        icon=_icon,
         bundle_identifier='it.diarioalimentare.app',
         info_plist={
             'CFBundlePackageType': 'APPL',

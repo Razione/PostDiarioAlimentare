@@ -4,8 +4,8 @@ Analizzatore Diari Alimentari
 Lancia con:  python main.py
 """
 
+import os
 import sys
-import re
 import json
 import pandas as pd
 
@@ -20,1097 +20,35 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QAction
+from PyQt6.QtGui import QColor, QFont, QAction, QIcon
 
 from database import Database
 
-# ── Constants ─────────────────────────────────────────────────────────────────
 
-MEALS = ["Colazione", "Spuntino mattina", "Pranzo", "Spuntino pomeriggio", "Cena"]
-MEAL_ORDER = {m: i for i, m in enumerate(MEALS)}
-DAYS = [1, 2, 3, 4]
-APP_TITLE = "Analizzatore Diari Alimentari"
+def resource_path(rel: str) -> str:
+    """Path di una risorsa, sia in sviluppo sia dentro il bundle PyInstaller."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+from constants import (
+    MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
+    ENERGY_LABEL, _MNOVA_COLS,
+    _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
+    _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
+    _category_code, _load_mnova_config, _compute_mnova,
+    _compute_energy_kcal, _compute_user_totals, _compute_mnova_breakdown,
+    _load_percent_config,
+)
+from delegates import _DayFrameDelegate
+from dialogs import (
+    BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
+    PreferencesDialog, FormulaDialog, SpecialValuesDialog,
+    PercentDialog, BeverageCategoriesDialog, DiaryImportDialog,
+)
+
+
+# ── Tabs / Widgets ─────────────────────────────────────
 
-# Struttura del Content Export: offset rispetto alla colonna "Data" di ciascun giorno
-# (meal_name, offset_primo_alimento, numero_max_alimenti)
-_CONTENT_EXPORT_MEALS = [
-    ("Colazione",            4,   20),
-    ("Spuntino mattina",    66,   15),
-    ("Pranzo",             113,   30),
-    ("Spuntino pomeriggio", 205,  15),
-    ("Cena",               252,   30),
-]
-# Colonne "Data" dove inizia ognuno dei 4 giorni nel DataFrame concatenato
-_CONTENT_EXPORT_DAY_COLS = [1, 343, 685, 1027]
-
-
-def _parse_qty_grams(raw: str):
-    """Estrae i grammi da una stringa libera (es. '250 g', '80gr').
-    Ritorna None se non riesce a determinare un peso in grammi."""
-    if not raw or raw.lower() == "nan":
-        return None
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:gr?(?:amm?[io]?)?)\b", raw, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1).replace(",", "."))
-        except ValueError:
-            pass
-    return None
-
-
-# ── Dialogs ───────────────────────────────────────────────────────────────────
-
-class BDASearchDialog(QDialog):
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.value = None
-
-        self.setWindowTitle("Cerca alimento BDA")
-        self.resize(720, 480)
-        self._build()
-        self._do_search()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Cerca:"))
-        self.search_edit = QLineEdit()
-        self.search_edit.textChanged.connect(self._do_search)
-        search_row.addWidget(self.search_edit)
-        layout.addLayout(search_row)
-
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Alimento"])
-        hdr0 = self.tree.header()
-        assert hdr0 is not None
-        hdr0.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tree.itemDoubleClicked.connect(lambda _: self._select())
-        layout.addWidget(self.tree)
-
-        btn_row = QHBoxLayout()
-        btn_clear = QPushButton("Rimuovi associazione")
-        btn_clear.clicked.connect(self._clear)
-        btn_row.addWidget(btn_clear)
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_select = QPushButton("Seleziona")
-        btn_select.clicked.connect(self._select)
-        btn_select.setDefault(True)
-        btn_row.addWidget(btn_select)
-        layout.addLayout(btn_row)
-
-    def _do_search(self):
-        foods = self.db.search_bda(self.search_edit.text(), limit=400)
-        self.tree.clear()
-        for f in foods:
-            item = QTreeWidgetItem([f["name"]])
-            item.setData(0, Qt.ItemDataRole.UserRole, f["id"])
-            self.tree.addTopLevelItem(item)
-
-    def _select(self):
-        items = self.tree.selectedItems()
-        if not items:
-            return
-        item = items[0]
-        self.value = (item.data(0, Qt.ItemDataRole.UserRole), item.text(0))
-        self.accept()
-
-    def _clear(self):
-        self.value = (None, None)
-        self.accept()
-
-
-class AddEditEntryDialog(QDialog):
-    def __init__(self, parent, entry=None, default_day=1):
-        super().__init__(parent)
-        self.value = None
-        editing = entry is not None
-
-        self.setWindowTitle("Modifica voce" if editing else "Nuova voce")
-        self.setFixedSize(400, 260)
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self.food_edit = QLineEdit(entry["food_name"] if editing else "")
-        form.addRow("Alimento:", self.food_edit)
-
-        qty_val = entry.get("quantity_g") if editing else None
-        qty_str = f"{qty_val:.4g}" if qty_val is not None else ""
-        self.qty_edit = QLineEdit(qty_str)
-        self.qty_edit.setPlaceholderText("—")
-        form.addRow("Quantità (g):", self.qty_edit)
-
-        self.meal_combo = QComboBox()
-        self.meal_combo.addItems(MEALS)
-        if editing:
-            idx = self.meal_combo.findText(entry["meal"])
-            if idx >= 0:
-                self.meal_combo.setCurrentIndex(idx)
-        form.addRow("Pasto:", self.meal_combo)
-
-        self.day_combo = QComboBox()
-        self.day_combo.addItems(["1", "2", "3", "4"])
-        self.day_combo.setCurrentIndex((entry["day"] if editing else default_day) - 1)
-        form.addRow("Giorno:", self.day_combo)
-
-        self.notes_edit = QLineEdit(entry["notes"] if editing else "")
-        form.addRow("Note:", self.notes_edit)
-
-        layout.addLayout(form)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("OK")
-        btn_ok.clicked.connect(self._ok)
-        btn_ok.setDefault(True)
-        btn_row.addWidget(btn_ok)
-        layout.addLayout(btn_row)
-
-    def _ok(self):
-        name = self.food_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Attenzione", "Inserire il nome dell'alimento.")
-            return
-        qty_txt = self.qty_edit.text().strip()
-        if not qty_txt or qty_txt == "—":
-            qty = None
-        else:
-            try:
-                qty = float(qty_txt.replace(",", "."))
-            except ValueError:
-                QMessageBox.warning(self, "Attenzione", "Quantità non valida.")
-                return
-        self.value = {
-            "food_name": name,
-            "quantity_g": qty,
-            "meal": self.meal_combo.currentText(),
-            "day": int(self.day_combo.currentText()),
-            "notes": self.notes_edit.text().strip(),
-        }
-        self.accept()
-
-
-class BDAImportDialog(QDialog):
-    def __init__(self, parent, df: pd.DataFrame):
-        super().__init__(parent)
-        self.value = None
-
-        self.setWindowTitle("Configura importazione BDA")
-        self.setFixedSize(440, 180)
-
-        layout = QVBoxLayout(self)
-        cols = list(df.columns)
-
-        lbl = QLabel(
-            f"File caricato: {len(df)} righe, {len(cols)} colonne.\n\n"
-            "Seleziona la colonna che contiene il nome dell'alimento:"
-        )
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        self.name_combo = QComboBox()
-        self.name_combo.addItems(cols)
-        layout.addWidget(self.name_combo)
-
-        hint = QLabel("Tutte le altre colonne numeriche verranno importate come valori nutrizionali.")
-        hint.setStyleSheet("color: gray;")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_import = QPushButton("Importa")
-        btn_import.clicked.connect(self._ok)
-        btn_import.setDefault(True)
-        btn_row.addWidget(btn_import)
-        layout.addLayout(btn_row)
-
-    def _ok(self):
-        self.value = self.name_combo.currentText()
-        self.accept()
-
-
-class PreferencesDialog(QDialog):
-    """Preferenze: configura le coppie nutriente/soglia per il calcolo mNOVA."""
-
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.setWindowTitle("Preferenze – Cutoff mNOVA")
-        self.resize(520, 380)
-        self._build()
-        self._load()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        lbl = QLabel(
-            "Definisci i cutoff per mNOVA (NOVA 3 → 3a/3b, NOVA 4 → 4a/4b).\n"
-            "Se almeno un nutriente supera la soglia → variante 'b', altrimenti 'a'.\n"
-            "Soglie distinte per <b>cibo</b> e <b>bevanda</b> (quali categorie sono "
-            "bevande si imposta in «Preferenze → Bevande»). Valori per 100 g · "
-            "«Sale (g)» = Sodio(mg) × 2.5 / 1000."
-        )
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        self._nutrients = _cutoff_options(self.db)
-        self.table = QTableWidget(len(self._nutrients), 3)
-        self.table.setHorizontalHeaderLabels(
-            ["Nutriente", "Soglia cibo", "Soglia bevanda"]
-        )
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        vh = self.table.verticalHeader()
-        if vh is not None:
-            vh.setVisible(False)
-        for row, name in enumerate(self._nutrients):
-            name_item = QTableWidgetItem(name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 0, name_item)
-            self.table.setItem(row, 1, QTableWidgetItem(""))
-            self.table.setItem(row, 2, QTableWidgetItem(""))
-        layout.addWidget(self.table)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(sep)
-
-        ok_row = QHBoxLayout()
-        ok_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        ok_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("Salva")
-        btn_ok.clicked.connect(self._save)
-        btn_ok.setDefault(True)
-        ok_row.addWidget(btn_ok)
-        layout.addLayout(ok_row)
-
-    def _load(self):
-        cfg = _load_mnova_config(self.db)
-        food = {c.get("col"): c.get("threshold") for c in cfg["food"]}
-        bev = {c.get("col"): c.get("threshold") for c in cfg["beverage"]}
-        for row, name in enumerate(self._nutrients):
-            fv, bv = food.get(name), bev.get(name)
-            self.table.item(row, 1).setText("" if fv is None else str(fv))
-            self.table.item(row, 2).setText("" if bv is None else str(bv))
-
-    def _save(self):
-        food, beverage = [], []
-        for row, name in enumerate(self._nutrients):
-            for col_idx, bucket in ((1, food), (2, beverage)):
-                it = self.table.item(row, col_idx)
-                raw = (it.text() if it else "").strip().replace(",", ".")
-                if not raw:
-                    continue  # soglia vuota → cutoff disattivato per questo nutriente
-                try:
-                    bucket.append({"col": name, "threshold": float(raw)})
-                except ValueError:
-                    pass
-        self.db.set_setting(
-            "mnova_cutoffs",
-            json.dumps({"food": food, "beverage": beverage}, ensure_ascii=False),
-        )
-        self.accept()
-
-
-class FormulaDialog(QDialog):
-    """Preferenze: formula per il calcolo del riepilogo nutrizionale, per ogni nutriente."""
-
-    _SAFE    = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
-    _DEFAULT = "val * qty / 100"
-
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.setWindowTitle("Preferenze – Formula nutrizionale")
-        self.resize(620, 520)
-        self._build()
-        self._load()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-
-        hint = QLabel(
-            "Variabili: <b>val</b> = valore BDA per 100 g · <b>qty</b> = quantità in grammi\n"
-            "Funzioni: abs · max · min · round · Operatori: + − * / ** ( )"
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
-        layout.addWidget(hint)
-
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Cerca:"))
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Filtra nutriente…")
-        self.search_edit.textChanged.connect(self._filter)
-        search_row.addWidget(self.search_edit)
-        layout.addLayout(search_row)
-
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Nutriente", "Formula"])
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.setItemDelegateForColumn(1, _SelectAllDelegate(self.table))
-        layout.addWidget(self.table)
-
-        btn_row = QHBoxLayout()
-        btn_reset = QPushButton("Reimposta default (selezione)")
-        btn_reset.setToolTip("Reimposta le righe selezionate; senza selezione reimposta tutto.")
-        btn_reset.clicked.connect(self._reset)
-        btn_row.addWidget(btn_reset)
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("Salva")
-        btn_ok.clicked.connect(self._save)
-        btn_ok.setDefault(True)
-        btn_row.addWidget(btn_ok)
-        layout.addLayout(btn_row)
-
-    def _load(self):
-        try:
-            saved = json.loads(self.db.get_setting("nutri_formulas") or "{}")
-        except Exception:
-            saved = {}
-        cols = [c for c in self.db.get_bda_columns() if c not in _SKIP_BDA_COLS]
-        self.table.setRowCount(len(cols))
-        for i, col in enumerate(cols):
-            name_item = QTableWidgetItem(str(col))
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(i, 0, name_item)
-            self.table.setItem(i, 1, QTableWidgetItem(saved.get(col, self._DEFAULT)))
-
-    def _filter(self, text):
-        q = text.strip().lower()
-        for row in range(self.table.rowCount()):
-            it = self.table.item(row, 0)
-            self.table.setRowHidden(row, bool(q) and (it is None or q not in it.text().lower()))
-
-    def _reset(self):
-        rows = {idx.row() for idx in self.table.selectedIndexes()}
-        targets = rows if rows else range(self.table.rowCount())
-        for row in targets:
-            it = self.table.item(row, 1)
-            if it:
-                it.setText(self._DEFAULT)
-
-    def _save(self):
-        formulas, errors = {}, []
-        for row in range(self.table.rowCount()):
-            ni = self.table.item(row, 0)
-            fi = self.table.item(row, 1)
-            if ni is None or fi is None:
-                continue
-            col     = ni.text()
-            formula = fi.text().strip() or self._DEFAULT
-            try:
-                eval(formula, self._SAFE, {"val": 1.0, "qty": 100.0})
-            except Exception as exc:
-                errors.append(f"• {col}: {exc}")
-                continue
-            if formula != self._DEFAULT:
-                formulas[col] = formula
-        if errors:
-            QMessageBox.warning(self, "Formule non valide",
-                                "Errori nelle seguenti formule:\n" + "\n".join(errors))
-            return
-        self.db.set_setting("nutri_formulas", json.dumps(formulas, ensure_ascii=False))
-        self.accept()
-
-
-class SpecialValuesDialog(QDialog):
-    """Preferenze: valore sostitutivo per i codici speciali BDA (-2 tracce, -3 missing)."""
-
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.setWindowTitle("Preferenze – Valori speciali (-2 / -3)")
-        self.resize(580, 300)
-        self._build()
-        self._load()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        lbl = QLabel(
-            "Nella BDA il valore <b>-2</b> indica le «tracce» (concentrazione molto bassa) "
-            "e <b>-3</b> indica un dato <b>mancante</b>.<br>"
-            "Scegli con quale valore numerico sostituirli nel calcolo del riepilogo "
-            "nutrizionale, ed eventualmente aggiorna la descrizione."
-        )
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        self.table = QTableWidget(len(_SPECIAL_CODES), 4)
-        self.table.setHorizontalHeaderLabels(
-            ["Codice", "Significato", "Valore sostitutivo", "Descrizione"]
-        )
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        vh = self.table.verticalHeader()
-        if vh is not None:
-            vh.setVisible(False)
-        layout.addWidget(self.table)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(sep)
-
-        ok_row = QHBoxLayout()
-        ok_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        ok_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("Salva")
-        btn_ok.clicked.connect(self._save)
-        btn_ok.setDefault(True)
-        ok_row.addWidget(btn_ok)
-        layout.addLayout(ok_row)
-
-    def _load(self):
-        special = _load_special_values(self.db)
-        for row, (code, name, _desc) in enumerate(_SPECIAL_CODES):
-            code_item = QTableWidgetItem(code)
-            code_item.setFlags(code_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            code_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(row, 0, code_item)
-
-            name_item = QTableWidgetItem(name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 1, name_item)
-
-            cfg = special[code]
-            val_item = QTableWidgetItem(f"{cfg['value']:g}")
-            val_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 2, val_item)
-
-            self.table.setItem(row, 3, QTableWidgetItem(cfg["desc"]))
-
-    def _save(self):
-        special, errors = {}, []
-        for row, (code, _name, _desc) in enumerate(_SPECIAL_CODES):
-            val_item = self.table.item(row, 2)
-            desc_item = self.table.item(row, 3)
-            raw = (val_item.text() if val_item else "").strip().replace(",", ".")
-            try:
-                value = float(raw)
-            except ValueError:
-                errors.append(f"• {code}: «{raw}» non è un numero valido")
-                continue
-            special[code] = {"value": value, "desc": desc_item.text() if desc_item else ""}
-        if errors:
-            QMessageBox.warning(self, "Valori non validi",
-                                "Correggi i seguenti valori:\n" + "\n".join(errors))
-            return
-        self.db.set_setting("special_values", json.dumps(special, ensure_ascii=False))
-        self.accept()
-
-
-class PercentDialog(QDialog):
-    """Preferenze: nutrienti per cui mostrare la % giornaliera, con fattore moltiplicativo."""
-
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.setWindowTitle("Preferenze – Percentuali")
-        self.resize(520, 380)
-        self._build()
-        self._load()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        lbl = QLabel(
-            "Scegli i nutrienti per cui mostrare una colonna percentuale per ogni giorno.<br>"
-            "La % è calcolata come <b>(valore del giorno × fattore) / energia totale del "
-            "giorno × 100</b>.<br>Con fattore = kcal/g (proteine 4, grassi 9, carboidrati "
-            "3,75, fibra 2, alcol 7) ottieni la ripartizione energetica."
-        )
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(
-            ["Nutriente (colonna BDA)", "Fattore", "Denominatore"]
-        )
-        hdr = self.table.horizontalHeader()
-        assert hdr is not None
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        layout.addWidget(self.table)
-
-        btn_row = QHBoxLayout()
-        btn_add = QPushButton("+ Aggiungi")
-        btn_add.clicked.connect(self._add_row)
-        btn_row.addWidget(btn_add)
-        btn_del = QPushButton("Rimuovi")
-        btn_del.clicked.connect(self._remove_row)
-        btn_row.addWidget(btn_del)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(sep)
-
-        ok_row = QHBoxLayout()
-        ok_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        ok_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("Salva")
-        btn_ok.clicked.connect(self._save)
-        btn_ok.setDefault(True)
-        ok_row.addWidget(btn_ok)
-        layout.addLayout(ok_row)
-
-    _ENERGY_DENOM_LABEL = "Energia totale"
-
-    def _cols(self):
-        return [c for c in (self.db.get_bda_columns() or []) if c not in _SKIP_BDA_COLS]
-
-    def _add_row(self, col_name="", factor="", denom=""):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        cb = QComboBox()
-        cb.addItems(self._cols())
-        if col_name:
-            idx = cb.findText(col_name)
-            if idx >= 0:
-                cb.setCurrentIndex(idx)
-        self.table.setCellWidget(row, 0, cb)
-        self.table.setItem(row, 1, QTableWidgetItem(str(factor)))
-
-        dcb = QComboBox()
-        dcb.addItem(self._ENERGY_DENOM_LABEL, "")  # data "" = energia totale del giorno
-        for c in self._cols():
-            dcb.addItem(c, c)
-        d_idx = dcb.findData(denom or "")
-        dcb.setCurrentIndex(max(d_idx, 0))
-        self.table.setCellWidget(row, 2, dcb)
-
-    def _remove_row(self):
-        rows = {idx.row() for idx in self.table.selectedIndexes()}
-        for r in sorted(rows, reverse=True):
-            self.table.removeRow(r)
-
-    def _load(self):
-        for c in _load_percent_config(self.db):
-            self._add_row(c.get("col", ""), c.get("factor", ""), c.get("denom", ""))
-
-    def _save(self):
-        config, errors = [], []
-        for row in range(self.table.rowCount()):
-            cb = self.table.cellWidget(row, 0)
-            it = self.table.item(row, 1)
-            dcb = self.table.cellWidget(row, 2)
-            if not isinstance(cb, QComboBox) or it is None:
-                continue
-            raw = it.text().strip().replace(",", ".")
-            try:
-                factor = float(raw)
-            except ValueError:
-                errors.append(f"• {cb.currentText()}: «{raw}» non è un numero valido")
-                continue
-            denom = dcb.currentData() if isinstance(dcb, QComboBox) else ""
-            config.append({"col": cb.currentText(), "factor": factor, "denom": denom or ""})
-        if errors:
-            QMessageBox.warning(self, "Fattori non validi",
-                                "Correggi i seguenti fattori:\n" + "\n".join(errors))
-            return
-        self.db.set_setting("percent_config", json.dumps(config, ensure_ascii=False))
-        self.accept()
-
-
-class BeverageCategoriesDialog(QDialog):
-    """Preferenze: marca quali categorie merceologiche sono bevande (cutoff mNOVA)."""
-
-    def __init__(self, parent, db: Database):
-        super().__init__(parent)
-        self.db = db
-        self.setWindowTitle("Preferenze – Bevande")
-        self.resize(560, 520)
-        self._build()
-        self._load()
-
-    def _build(self):
-        layout = QVBoxLayout(self)
-        lbl = QLabel(
-            "Seleziona le categorie merceologiche che sono <b>bevande</b>: a queste "
-            "vengono applicati i cutoff mNOVA «bevanda». Tutto il resto è trattato "
-            "come cibo."
-        )
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        self._cat_rows = self._cats()
-        if not self._cat_rows:
-            warn = QLabel("Nessuna categoria disponibile: carica una BDA che includa "
-                          "il foglio delle categorie merceologiche.")
-            warn.setWordWrap(True)
-            warn.setStyleSheet("color: darkorange;")
-            layout.addWidget(warn)
-        else:
-            search = QLineEdit()
-            search.setPlaceholderText("Filtra categoria…")
-            search.textChanged.connect(self._filter)
-            layout.addWidget(search)
-
-        self.list = QListWidget()
-        for code, rec in self._cat_rows:
-            macro = rec.get("macro_name_it") or ""
-            label = f"{macro} › {rec.get('name_it') or code}" if macro else (rec.get("name_it") or code)
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, code)
-            self.list.addItem(item)
-        layout.addWidget(self.list)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(sep)
-
-        ok_row = QHBoxLayout()
-        ok_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        ok_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("Salva")
-        btn_ok.clicked.connect(self._save)
-        btn_ok.setDefault(True)
-        ok_row.addWidget(btn_ok)
-        layout.addLayout(ok_row)
-
-    def _cats(self):
-        """Sotto-categorie ordinate per macro e nome."""
-        m = self.db.get_categories_map()
-        subs = [(c, r) for c, r in m.items() if r.get("macro_code") != c]
-        subs.sort(key=lambda t: ((t[1].get("macro_name_it") or ""),
-                                 (t[1].get("name_it") or "")))
-        return subs
-
-    def _filter(self, text):
-        q = text.strip().lower()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            it.setHidden(bool(q) and q not in it.text().lower())
-
-    def _load(self):
-        try:
-            saved = {str(c) for c in json.loads(self.db.get_setting("beverage_categories", "[]"))}
-        except Exception:
-            saved = set()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(Qt.ItemDataRole.UserRole) in saved:
-                it.setCheckState(Qt.CheckState.Checked)
-
-    def _save(self):
-        codes = [
-            self.list.item(i).data(Qt.ItemDataRole.UserRole)
-            for i in range(self.list.count())
-            if self.list.item(i).checkState() == Qt.CheckState.Checked
-        ]
-        self.db.set_setting("beverage_categories", json.dumps(codes, ensure_ascii=False))
-        self.accept()
-
-
-class DiaryImportDialog(QDialog):
-    def __init__(self, parent, df: pd.DataFrame):
-        super().__init__(parent)
-        self.value = None
-
-        self.setWindowTitle("Importa diario – mappa colonne")
-        self.setFixedSize(460, 320)
-
-        layout = QVBoxLayout(self)
-        all_cols = list(df.columns)
-        opt_cols = [""] + all_cols
-
-        layout.addWidget(QLabel(
-            f"File: {len(df)} righe – assegna le colonne ai campi del diario\n(* = obbligatorio):"
-        ))
-
-        form = QFormLayout()
-        self._combos = {}
-        fields = [
-            ("user_code",  "Codice utente *", all_cols),
-            ("day",        "Giorno (1-4) *",  all_cols),
-            ("meal",       "Pasto *",         all_cols),
-            ("food_name",  "Alimento *",      all_cols),
-            ("quantity_g", "Quantità (g)",    opt_cols),
-            ("notes",      "Note",            opt_cols),
-        ]
-        for key, label, options in fields:
-            combo = QComboBox()
-            combo.addItems(options)
-            self._combos[key] = combo
-            form.addRow(label + ":", combo)
-        layout.addLayout(form)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_import = QPushButton("Importa")
-        btn_import.clicked.connect(self._ok)
-        btn_import.setDefault(True)
-        btn_row.addWidget(btn_import)
-        layout.addLayout(btn_row)
-
-    def _ok(self):
-        required = ["user_code", "day", "meal", "food_name"]
-        mapping = {}
-        for key, combo in self._combos.items():
-            val = combo.currentText()
-            if key in required and not val:
-                QMessageBox.warning(self, "Attenzione", f"Il campo '{key}' è obbligatorio.")
-                return
-            mapping[key] = val or None
-        self.value = mapping
-        self.accept()
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _qty_display(qty) -> str:
-    """Formatta quantity_g per la visualizzazione: None → '—', altrimenti numero."""
-    return "—" if qty is None else f"{qty:.4g}"
-
-
-def _open_excel(path):
-    """Apre un file Excel in modo robusto (anche .xlsx con estensione errata)."""
-    try:
-        return pd.ExcelFile(path)
-    except Exception:
-        return pd.ExcelFile(path, engine="openpyxl")
-
-
-def _parse_bda_categories(xl) -> list:
-    """Legge il foglio delle categorie merceologiche dall'Excel BDA.
-
-    Struttura attesa: Codice | Categoria Merceologica (IT) | Food Categories (EN).
-    Le macro-categorie (codici < 1000, nomi maiuscoli) raggruppano le
-    sotto-categorie che le seguono nell'elenco. Ritorna lista di record o [].
-    """
-    sheet = next(
-        (s for s in xl.sheet_names
-         if "CATMERCEOL" in str(s).upper() or "CATEGOR" in str(s).upper()),
-        None,
-    )
-    if not sheet:
-        return []
-    df = pd.read_excel(xl, sheet_name=sheet)
-    if df.shape[1] < 2:
-        return []
-    out, macro = [], None
-    for _, r in df.iterrows():
-        code = r.iloc[0]
-        if pd.isna(code):
-            continue
-        try:
-            c = str(int(float(code)))
-        except (TypeError, ValueError):
-            continue
-        name_it = "" if pd.isna(r.iloc[1]) else str(r.iloc[1]).strip()
-        name_en = "" if (df.shape[1] < 3 or pd.isna(r.iloc[2])) else str(r.iloc[2]).strip()
-        if int(c) < 1000:  # macro-categoria
-            macro = (c, name_it, name_en)
-            out.append({"code": c, "name_it": name_it, "name_en": name_en,
-                        "macro_code": c, "macro_name_it": name_it, "macro_name_en": name_en})
-        else:              # sotto-categoria → eredita la macro precedente
-            out.append({"code": c, "name_it": name_it, "name_en": name_en,
-                        "macro_code": macro[0] if macro else None,
-                        "macro_name_it": macro[1] if macro else None,
-                        "macro_name_en": macro[2] if macro else None})
-    return out
-
-
-def _category_code(cm_value) -> str:
-    """Normalizza il valore 'Categoria Merceologica' di un alimento a codice stringa."""
-    if cm_value is None:
-        return ""
-    try:
-        return str(int(float(cm_value)))
-    except (TypeError, ValueError):
-        return str(cm_value).strip()
-
-
-def _food_category_name(cat_map: dict, cm_value) -> str:
-    """Nome (IT) della categoria di un alimento, da 'Categoria Merceologica'."""
-    rec = cat_map.get(_category_code(cm_value))
-    return rec["name_it"] if rec else ""
-
-
-def _load_mnova_config(db) -> dict:
-    """Configurazione mNOVA: cutoff distinti per cibo e bevanda + categorie bevanda.
-
-    Returns {'food': [...], 'beverage': [...], 'beverage_cats': set,
-             'code_to_macro': {code: macro_code}}.
-    Compatibile col vecchio formato (lista semplice = cutoff del cibo).
-    """
-    try:
-        data = json.loads(db.get_setting("mnova_cutoffs", "[]"))
-    except Exception:
-        data = []
-    if isinstance(data, list):           # vecchio formato → solo cibo
-        food, beverage = data, []
-    else:
-        food = data.get("food", [])
-        beverage = data.get("beverage", [])
-    try:
-        bev_cats = {str(c) for c in json.loads(db.get_setting("beverage_categories", "[]"))}
-    except Exception:
-        bev_cats = set()
-    code_to_macro = {}
-    if bev_cats:
-        try:
-            code_to_macro = {c: r.get("macro_code")
-                             for c, r in db.get_categories_map().items()}
-        except Exception:
-            code_to_macro = {}
-    return {"food": food, "beverage": beverage,
-            "beverage_cats": bev_cats, "code_to_macro": code_to_macro}
-
-
-def _is_beverage(bda_data: dict, config: dict) -> bool:
-    """True se l'alimento appartiene a una categoria marcata come bevanda."""
-    cats = config.get("beverage_cats")
-    if not cats or not bda_data:
-        return False
-    code = _category_code(bda_data.get("Categoria Merceologica"))
-    if code in cats:
-        return True
-    return config.get("code_to_macro", {}).get(code) in cats
-
-
-_SALT_LABEL = "Sale (g)"
-_SALT_SOURCE = ("Sodium", "Sodio")
-_SALT_FACTOR = 2.5 / 1000.0  # sodio (mg/100 g) → sale (g/100 g)
-
-# Nutrienti ammessi come cutoff mNOVA, nell'ordine di visualizzazione (per 100 g).
-# Una tupla = colonna BDA diretta (nomi accettati); _SALT_LABEL = derivato dal sodio.
-_CUTOFF_ORDER = [
-    ("Total fat", "Lipidi totali"),
-    ("Total saturated fatty acids", "Acidi grassi saturi totali"),
-    ("Soluble carbohydrates (MSE)", "Carboidrati solubili (MSE)"),
-    _SALT_LABEL,
-]
-
-
-def _cutoff_options(db) -> list:
-    """Nutrienti selezionabili come cutoff mNOVA, adattati ai nomi BDA presenti."""
-    cols = set(db.get_bda_columns() or [])
-    opts = []
-    for entry in _CUTOFF_ORDER:
-        if entry == _SALT_LABEL:
-            if any(n in cols for n in _SALT_SOURCE):
-                opts.append(_SALT_LABEL)
-        else:
-            col = next((n for n in entry if n in cols), None)
-            if col:
-                opts.append(col)
-    return opts
-
-
-def _cutoff_value(label, bda_data: dict):
-    """Valore del nutriente-cutoff (per 100 g) dalla riga BDA, o None."""
-    if not bda_data:
-        return None
-    if label == _SALT_LABEL:
-        src = next((bda_data[n] for n in _SALT_SOURCE if bda_data.get(n) is not None), None)
-        try:
-            return float(src) * _SALT_FACTOR if src is not None else None
-        except (TypeError, ValueError):
-            return None
-    v = bda_data.get(label)
-    try:
-        return float(v) if v is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-# Configurazione percentuali di default: (nomi-colonna accettati, fattore).
-# Denominatore di default = energia totale del giorno.
-_PERCENT_DEFAULT_TERMS = [
-    (("Total protein", "Proteine totali"),                              4.0),
-    (("Total fat", "Lipidi totali"),                                    9.0),
-    (("Available carbohydrates (MSE)", "Carboidrati disponibili (MSE)"), 3.75),
-    (("Dietary total fibre", "Dietary total fiber", "Fibra alimentare totale"), 2.0),
-    (("Alcohol", "Alcol"),                                              7.0),
-    (("Soluble carbohydrates (MSE)", "Carboidrati solubili (MSE)"),     3.75),
-]
-
-
-def _default_percent_config(db) -> list:
-    """Config % di default, adattata ai nomi-colonna effettivi della BDA."""
-    cols = set(db.get_bda_columns() or [])
-    out = []
-    for names, factor in _PERCENT_DEFAULT_TERMS:
-        col = next((n for n in names if n in cols), None)
-        if col:
-            out.append({"col": col, "factor": factor, "denom": ""})
-    return out
-
-
-def _load_percent_config(db) -> list:
-    """Nutrienti con colonna percentuale.
-
-    Lista di {'col': str, 'factor': float, 'denom': str}. 'denom' vuoto = energia
-    totale del giorno, altrimenti il nome di una colonna BDA. Se mai configurata,
-    ritorna la configurazione di default.
-    """
-    raw = db.get_setting("percent_config")
-    if raw is None:
-        return _default_percent_config(db)
-    try:
-        return json.loads(raw)
-    except Exception:
-        return []
-
-
-# Codici speciali BDA: -2 = tracce (concentrazione molto bassa), -3 = dato mancante
-_SPECIAL_CODES = [
-    ("-2", "Tracce", "Concentrazione del componente molto bassa."),
-    ("-3", "Missing (dato mancante)",
-     "Componente non disponibile al momento nei dati di composizione."),
-]
-_SPECIAL_DEFAULTS = {code: {"value": 0.0, "desc": desc} for code, _name, desc in _SPECIAL_CODES}
-
-
-def _load_special_values(db) -> dict:
-    """Mappa i codici speciali BDA al valore sostitutivo scelto dall'utente.
-
-    Returns {'-2': {'value': float, 'desc': str}, '-3': {...}}.
-    """
-    try:
-        saved = json.loads(db.get_setting("special_values") or "{}")
-    except Exception:
-        saved = {}
-    out = {}
-    for code, default in _SPECIAL_DEFAULTS.items():
-        s = saved.get(code, {})
-        try:
-            value = float(s.get("value", default["value"]))
-        except (TypeError, ValueError):
-            value = default["value"]
-        out[code] = {"value": value, "desc": s.get("desc", default["desc"])}
-    return out
-
-
-def _compute_mnova(nova, bda_data: dict | None, config: dict) -> str:
-    """Calcola l'etichetta mNOVA.
-
-    NOVA 1/2 → uguale a NOVA; NOVA 3/4 → 'a' o 'b' in base ai cutoff.
-    Usa i cutoff 'beverage' se l'alimento è in una categoria-bevanda,
-    altrimenti quelli 'food'. `config` = output di _load_mnova_config.
-    """
-    if nova is None:
-        return ""
-    if nova in (1, 2):
-        return str(nova)
-    if not bda_data or not config:
-        return str(nova)
-
-    cutoffs = config["beverage"] if _is_beverage(bda_data, config) else config["food"]
-    if not cutoffs:
-        return str(nova)
-
-    def _exceeds(c):
-        if not c.get("col") or c.get("threshold") is None:
-            return False
-        val = _cutoff_value(c["col"], bda_data)
-        return val is not None and val > float(c["threshold"])
-
-    is_b = any(_exceeds(c) for c in cutoffs)
-    return f"{nova}b" if is_b else f"{nova}a"
-
-
-class _SelectAllDelegate(QStyledItemDelegate):
-    """Delegate che seleziona tutto il testo quando si apre l'editor."""
-    def createEditor(self, parent, option, index):
-        editor = super().createEditor(parent, option, index)
-        if isinstance(editor, QLineEdit):
-            editor.setAutoFillBackground(True)
-        return editor
-
-    def setEditorData(self, editor, index):
-        super().setEditorData(editor, index)
-        if isinstance(editor, QLineEdit):
-            editor.selectAll()
-
-
-class _DayFrameDelegate(QStyledItemDelegate):
-    """Delegate per DayFrame: QLineEdit su Qtà, QComboBox su NOVA."""
-
-    def __init__(self, qty_col: int, nova_col: int, parent=None):
-        super().__init__(parent)
-        self._qty_col = qty_col
-        self._nova_col = nova_col
-
-    def createEditor(self, parent, option, index):
-        col = index.column()
-        if col == self._qty_col:
-            editor = super().createEditor(parent, option, index)
-            if isinstance(editor, QLineEdit):
-                editor.setAutoFillBackground(True)
-            return editor
-        if col == self._nova_col:
-            cb = QComboBox(parent)
-            cb.addItems(["—", "1", "2", "3", "4"])
-            cb.setAutoFillBackground(True)
-            return cb
-        return None
-
-    def setEditorData(self, editor, index):
-        if index.column() == self._nova_col and isinstance(editor, QComboBox):
-            txt = index.data(Qt.ItemDataRole.DisplayRole) or "—"
-            i = editor.findText(txt)
-            editor.setCurrentIndex(max(i, 0))
-        else:
-            super().setEditorData(editor, index)
-            if isinstance(editor, QLineEdit):
-                editor.selectAll()
-
-    def setModelData(self, editor, model, index):
-        if index.column() == self._nova_col and isinstance(editor, QComboBox) and model:
-            model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
-        else:
-            super().setModelData(editor, model, index)
-
-
-# ── Tabs ──────────────────────────────────────────────────────────────────────
 
 class BDATab(QWidget):
     def __init__(self, db: Database):
@@ -1646,158 +584,6 @@ class DayFrame(QWidget):
             item.setText(self._nova_col, str(nova) if nova is not None else "—")
             item.setText(self._mnova_col, mnova or "—")
             self.tree.blockSignals(False)
-
-
-# Colonne BDA che non sono valori nutrizionali (da escludere dal riepilogo)
-_SKIP_BDA_COLS = {
-    "Simbolo", "Codice Alimento", "Nome Alimento ENG",
-    "Nome Scientifico", "Categoria Merceologica", "parte edibile",
-}
-
-# Energia totale (kcal) calcolata dai totali giornalieri dei macronutrienti.
-# Per ciascun termine: (nomi-colonna BDA accettati, coefficiente kcal/g).
-ENERGY_LABEL = "Energia totale RICALCOLATA (kcal)"
-_ENERGY_TERMS = [
-    (("Total protein", "Proteine totali"),                              4.0),
-    (("Total fat", "Lipidi totali"),                                    9.0),
-    (("Available carbohydrates (MSE)", "Carboidrati disponibili (MSE)"), 3.75),
-    (("Dietary total fibre", "Dietary total fiber", "Fibra alimentare totale"), 2.0),
-    (("Alcohol", "Alcol"),                                              7.0),
-]
-
-
-def _compute_energy_kcal(day_totals: dict) -> float:
-    """Energia (kcal) di un giorno dai totali dei macronutrienti.
-
-    (proteine*4) + (grassi*9) + (carboidrati disponibili*3,75)
-    + (fibra*2) + (alcol*7).
-    """
-    energy = 0.0
-    for names, coeff in _ENERGY_TERMS:
-        for name in names:
-            if name in day_totals:
-                energy += day_totals[name] * coeff
-                break
-    return energy
-
-
-def _compute_user_totals(db: "Database", user_code: str):
-    """Calcola i totali nutrizionali per giorno per un utente.
-
-    Returns:
-        totals  – dict {day: {col_name: float}}
-        missing – dict {day: int}  (voci senza BDA associata)
-    """
-    try:
-        formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
-    except Exception:
-        formulas = {}
-    _default = "val * qty / 100"
-    _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
-    # Sostituzioni per i codici speciali BDA (-2 tracce, -3 missing)
-    special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
-    totals = {d: {} for d in DAYS}
-    missing = {d: 0 for d in DAYS}
-
-    entries = db.get_entries(user_code)
-    bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
-    bda_cache = db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
-
-    for e in entries:
-        day = e["day"]
-        if not e["bda_food_id"]:
-            missing[day] += 1
-            continue
-        bda = bda_cache.get(e["bda_food_id"])
-        if not bda:
-            continue
-        qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
-        for col, val in bda.items():
-            if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
-                continue
-            try:
-                fval = float(val)
-                fval = special.get(fval, fval)  # rimpiazza -2/-3 col valore scelto
-                formula = formulas.get(col, _default)
-                result = eval(formula, _safe, {"val": fval, "qty": qty})
-                totals[day][col] = totals[day].get(col, 0.0) + result
-            except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
-                pass
-
-    return totals, missing
-
-
-# Colonne della tabella di ripartizione mNOVA.
-_MNOVA_COLS = ["1", "2", "3a", "3b", "3a+3b", "4a", "4b", "4a+4b"]
-
-
-def _compute_mnova_breakdown(db: "Database", user_code: str):
-    """Ripartizione per categoria mNOVA: grammi e kcal per giorno e in media.
-
-    Le voci senza BDA o senza valore NOVA sono escluse.
-
-    Returns:
-        per_day – dict {day: (grams, kcal)}, con grams/kcal dict {colonna mNOVA: float}
-        media   – (grams, kcal): media giorno per giorno (somma ÷ numero di giorni)
-    """
-    try:
-        formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
-    except Exception:
-        formulas = {}
-    _default = "val * qty / 100"
-    _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
-    special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
-    mnova_cfg = _load_mnova_config(db)
-
-    grams = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
-    kcal = {d: {c: 0.0 for c in _MNOVA_COLS} for d in DAYS}
-
-    entries = db.get_entries(user_code)
-    bda_ids = {e["bda_food_id"] for e in entries if e.get("bda_food_id")}
-    bda_cache = db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
-
-    for e in entries:
-        if not e["bda_food_id"] or e.get("nova") is None:
-            continue
-        bda = bda_cache.get(e["bda_food_id"])
-        if not bda:
-            continue
-        day = e["day"]
-        mnova = _compute_mnova(e["nova"], bda, mnova_cfg)  # "1".."4b" (o "3"/"4")
-        if not mnova:
-            continue
-        qty = float(e["quantity_g"]) if e["quantity_g"] is not None else 100.0
-
-        # Grammi nutrizionali della singola voce → energia (kcal) della voce.
-        food_totals = {}
-        for col, val in bda.items():
-            if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
-                continue
-            try:
-                fval = float(val)
-                fval = special.get(fval, fval)
-                food_totals[col] = eval(formulas.get(col, _default), _safe,
-                                        {"val": fval, "qty": qty})
-            except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
-                pass
-        e_kcal = _compute_energy_kcal(food_totals)
-
-        def _add(cat):
-            grams[day][cat] += qty
-            kcal[day][cat] += e_kcal
-
-        if mnova in _MNOVA_COLS:           # colonna esatta (1, 2, 3a, 3b, 4a, 4b)
-            _add(mnova)
-        if mnova.startswith("3"):          # colonna somma 3a+3b
-            _add("3a+3b")
-        elif mnova.startswith("4"):        # colonna somma 4a+4b
-            _add("4a+4b")
-
-    per_day = {d: (grams[d], kcal[d]) for d in DAYS}
-    n = len(DAYS)
-    media_g = {c: sum(grams[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
-    media_k = {c: sum(kcal[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
-    return per_day, (media_g, media_k)
 
 
 class NutriSummaryFrame(QWidget):
@@ -2595,9 +1381,26 @@ class App(QMainWindow):
         file_m = mb.addMenu("File")
         assert file_m is not None
         act_bda = QAction("Carica BDA da Excel", self)
-        act_bda.triggered.connect(lambda: (self.nb.setCurrentIndex(0), self.bda_tab._load_bda()))
+        act_bda.triggered.connect(lambda: (self.nb.setCurrentWidget(self.bda_tab), self.bda_tab._load_bda()))
         file_m.addAction(act_bda)
         file_m.addSeparator()
+
+        act_exp_cfg = QAction("Esporta configurazione…", self)
+        act_exp_cfg.triggered.connect(self._export_config)
+        file_m.addAction(act_exp_cfg)
+        act_imp_cfg = QAction("Importa configurazione…", self)
+        act_imp_cfg.triggered.connect(self._import_config)
+        file_m.addAction(act_imp_cfg)
+        file_m.addSeparator()
+
+        act_exp_prj = QAction("Esporta progetto…", self)
+        act_exp_prj.triggered.connect(self._export_project)
+        file_m.addAction(act_exp_prj)
+        act_imp_prj = QAction("Importa progetto…", self)
+        act_imp_prj.triggered.connect(self._import_project)
+        file_m.addAction(act_imp_prj)
+        file_m.addSeparator()
+
         act_exit = QAction("Esci", self)
         act_exit.triggered.connect(self.close)
         file_m.addAction(act_exit)
@@ -2631,19 +1434,19 @@ class App(QMainWindow):
         self.setCentralWidget(self.nb)
 
         self.bda_tab = BDATab(self.db)
-        self.nb.addTab(self.bda_tab, "  BDA  ")
-
         self.users_tab = UsersTab(
             self.db,
             on_change=lambda: self.diary_tab.refresh_users() if hasattr(self, "diary_tab") else None,
         )
-        self.nb.addTab(self.users_tab, "  Utenti  ")
-
         self.diary_tab = DiaryTab(
             self.db,
             on_change=lambda: self.users_tab._refresh(notify=False),
         )
+
+        # Ordine schede: Diari, BDA, Utenti
         self.nb.addTab(self.diary_tab, "  Diari  ")
+        self.nb.addTab(self.bda_tab, "  BDA  ")
+        self.nb.addTab(self.users_tab, "  Utenti  ")
 
     def _open_preferences(self):
         dlg = PreferencesDialog(self, self.db)
@@ -2672,6 +1475,144 @@ class App(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.diary_tab.nutri_frame._refresh()
 
+    # ── Import / Export ───────────────────────────────────────────────────
+
+    def _refresh_all(self):
+        """Ricarica tutte le tab dopo un import."""
+        self.bda_tab._refresh_view()
+        self.users_tab._refresh(notify=False)
+        self.diary_tab.refresh_users()
+
+    def _read_export_file(self, path):
+        """Legge e valida un file di export. Ritorna il dict o None (con avviso)."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Errore lettura file", str(exc))
+            return None
+        if not isinstance(data, dict) or data.get("format") != EXPORT_FORMAT:
+            QMessageBox.warning(
+                self, "File non valido",
+                "Il file selezionato non è un export di Diario Alimentare.",
+            )
+            return None
+        return data
+
+    def _write_json(self, path, payload):
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            QMessageBox.critical(self, "Errore salvataggio", str(exc))
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        return True
+
+    def _export_config(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Esporta configurazione", "configurazione.json", "JSON (*.json)")
+        if not path:
+            return
+        settings = self.db.get_all_settings()
+        payload = {"format": EXPORT_FORMAT, "kind": "config",
+                   "version": EXPORT_VERSION, "settings": settings}
+        if self._write_json(path, payload):
+            QMessageBox.information(
+                self, "Configurazione esportata",
+                f"{len(settings)} preferenze salvate in:\n{path}")
+
+    def _import_config(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importa configurazione", "", "JSON (*.json);;Tutti i file (*.*)")
+        if not path:
+            return
+        data = self._read_export_file(path)
+        if data is None:
+            return
+        settings = data.get("settings")
+        if not isinstance(settings, dict) or not settings:
+            QMessageBox.warning(self, "Niente da importare",
+                                "Il file non contiene una configurazione.")
+            return
+        self.db.import_settings(settings)
+        self._refresh_all()
+        QMessageBox.information(self, "Configurazione importata",
+                                f"{len(settings)} preferenze applicate.")
+
+    def _export_project(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Esporta progetto", "progetto.json", "JSON (*.json)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            data = self.db.export_data(include_work=True, include_settings=True,
+                                       include_bda=True)
+        finally:
+            QApplication.restoreOverrideCursor()
+        payload = {"format": EXPORT_FORMAT, "kind": "project",
+                   "version": EXPORT_VERSION, **data}
+        if self._write_json(path, payload):
+            QMessageBox.information(
+                self, "Progetto esportato",
+                f"Esportati {len(data.get('users', [])):,} utenti, "
+                f"{len(data.get('diary_entries', [])):,} voci di diario e "
+                f"{len(data.get('bda_foods', [])):,} alimenti BDA in:\n{path}")
+
+    def _import_project(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importa progetto", "", "JSON (*.json);;Tutti i file (*.*)")
+        if not path:
+            return
+        data = self._read_export_file(path)
+        if data is None:
+            return
+
+        n_users = len(data.get("users", []))
+        n_entries = len(data.get("diary_entries", []))
+        has_bda = "bda_foods" in data
+        has_cfg = "settings" in data
+        parts = [f"{n_users} utenti", f"{n_entries} voci di diario"]
+        if has_bda:
+            parts.append(f"{len(data['bda_foods']):,} alimenti BDA")
+        if has_cfg:
+            parts.append("la configurazione")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Importa progetto")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("Il file contiene " + ", ".join(parts) + ".")
+        box.setInformativeText(
+            "<b>Sostituisci tutto</b>: rimpiazza i dati attuali con quelli del file"
+            + (" (BDA e configurazione comprese)." if has_bda or has_cfg else ".")
+            + "<br><b>Unisci</b>: aggiunge gli utenti del file a quelli esistenti "
+            "(i codici già presenti vengono rinominati); non tocca BDA né configurazione."
+        )
+        btn_replace = box.addButton("Sostituisci tutto", QMessageBox.ButtonRole.DestructiveRole)
+        btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is btn_replace:
+            self.db.replace_project(data)
+            self._refresh_all()
+            QMessageBox.information(self, "Progetto importato",
+                                    "I dati attuali sono stati sostituiti.")
+        elif clicked is btn_merge:
+            rep = self.db.merge_project(data)
+            self._refresh_all()
+            msg = f"Aggiunti {len(rep['added'])} utenti."
+            if rep["renamed"]:
+                msg += ("\n\nRinominati (codice già esistente):\n  "
+                        + "\n  ".join(f"{o} → {n}" for o, n in rep["renamed"].items()))
+            msg += ("\n\nSe gli alimenti non risultano associati, usa "
+                    "«Verifica / riassegna BDA».")
+            QMessageBox.information(self, "Progetto importato", msg)
+
     def _about(self):
         QMessageBox.information(
             self, "Informazioni",
@@ -2690,6 +1631,9 @@ if __name__ == "__main__":
 
     try:
         app = QApplication(sys.argv)
+        icon_path = resource_path("icon.png")
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
     except Exception:
         _log.write_text(traceback.format_exc())
         sys.exit(1)

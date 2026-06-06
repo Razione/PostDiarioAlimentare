@@ -1,0 +1,49 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows app
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 pandas openpyxl pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller diario_alimentare.spec --clean -y
+
+      - name: Zip app folder
+        id: zip-final
+        shell: pwsh
+        run: |
+          if (Test-Path "dist/DiarioAlimentare") {
+            Compress-Archive -Path "dist/DiarioAlimentare/*" -DestinationPath "dist/DiarioAlimentare-Windows.zip" -Force
+            "artifact_exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "artifact_exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Upload artifact
+        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-Windows
+          path: dist/DiarioAlimentare-Windows.zip
+          retention-days: 30

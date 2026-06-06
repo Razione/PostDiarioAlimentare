@@ -47,6 +47,18 @@ jobs:
               print('Error:', e)
           PY
 
+      - name: Generate macOS icon (.icns)
+        run: |
+          rm -rf icon.iconset icon.icns
+          mkdir -p icon.iconset
+          for s in 16 32 64 128 256 512; do
+            sips -z $s $s icon.png --out "icon.iconset/icon_${s}x${s}.png"
+            d=$((s*2))
+            sips -z $d $d icon.png --out "icon.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns icon.iconset -o icon.icns
+          ls -la icon.icns
+
       - name: Build with PyInstaller
         run: |
           python -m PyInstaller diario_alimentare.spec --clean -y
