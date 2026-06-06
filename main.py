@@ -4,6 +4,7 @@ Analizzatore Diari Alimentari
 Lancia con:  python main.py
 """
 
+import os
 import sys
 import json
 import pandas as pd
@@ -19,9 +20,15 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QAction
+from PyQt6.QtGui import QColor, QFont, QAction, QIcon
 
 from database import Database
+
+
+def resource_path(rel: str) -> str:
+    """Path di una risorsa, sia in sviluppo sia dentro il bundle PyInstaller."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
 
 from constants import (
     MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
@@ -1624,6 +1631,9 @@ if __name__ == "__main__":
 
     try:
         app = QApplication(sys.argv)
+        icon_path = resource_path("icon.png")
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
     except Exception:
         _log.write_text(traceback.format_exc())
         sys.exit(1)
