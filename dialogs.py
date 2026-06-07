@@ -50,7 +50,7 @@ class BDASearchDialog(QDialog):
         assert hdr0 is not None
         hdr0.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tree.itemDoubleClicked.connect(lambda _: self._select())
+        self.tree.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.tree)
 
         btn_row = QHBoxLayout()
@@ -75,11 +75,15 @@ class BDASearchDialog(QDialog):
             item.setData(0, Qt.ItemDataRole.UserRole, f["id"])
             self.tree.addTopLevelItem(item)
 
+    def _on_double_click(self, item, _column):
+        self._accept_item(item)
+
     def _select(self):
         items = self.tree.selectedItems()
-        if not items:
-            return
-        item = items[0]
+        if items:
+            self._accept_item(items[0])
+
+    def _accept_item(self, item):
         self.value = (item.data(0, Qt.ItemDataRole.UserRole), item.text(0))
         self.accept()
 
@@ -712,61 +716,4 @@ class BeverageCategoriesDialog(QDialog):
             if self.list.item(i).checkState() == Qt.CheckState.Checked
         ]
         self.db.set_setting("beverage_categories", json.dumps(codes, ensure_ascii=False))
-        self.accept()
-
-
-class DiaryImportDialog(QDialog):
-    def __init__(self, parent, df: pd.DataFrame):
-        super().__init__(parent)
-        self.value = None
-
-        self.setWindowTitle("Importa diario – mappa colonne")
-        self.setFixedSize(460, 320)
-
-        layout = QVBoxLayout(self)
-        all_cols = list(df.columns)
-        opt_cols = [""] + all_cols
-
-        layout.addWidget(QLabel(
-            f"File: {len(df)} righe – assegna le colonne ai campi del diario\n(* = obbligatorio):"
-        ))
-
-        form = QFormLayout()
-        self._combos = {}
-        fields = [
-            ("user_code",  "Codice utente *", all_cols),
-            ("day",        "Giorno (1-4) *",  all_cols),
-            ("meal",       "Pasto *",         all_cols),
-            ("food_name",  "Alimento *",      all_cols),
-            ("quantity_g", "Quantità (g)",    opt_cols),
-            ("notes",      "Note",            opt_cols),
-        ]
-        for key, label, options in fields:
-            combo = QComboBox()
-            combo.addItems(options)
-            self._combos[key] = combo
-            form.addRow(label + ":", combo)
-        layout.addLayout(form)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton("Annulla")
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
-        btn_import = QPushButton("Importa")
-        btn_import.clicked.connect(self._ok)
-        btn_import.setDefault(True)
-        btn_row.addWidget(btn_import)
-        layout.addLayout(btn_row)
-
-    def _ok(self):
-        required = ["user_code", "day", "meal", "food_name"]
-        mapping = {}
-        for key, combo in self._combos.items():
-            val = combo.currentText()
-            if key in required and not val:
-                QMessageBox.warning(self, "Attenzione", f"Il campo '{key}' è obbligatorio.")
-                return
-            mapping[key] = val or None
-        self.value = mapping
         self.accept()

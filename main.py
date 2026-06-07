@@ -58,7 +58,7 @@ from delegates import _DayFrameDelegate
 from dialogs import (
     BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
     PreferencesDialog, FormulaDialog, SpecialValuesDialog,
-    PercentDialog, BeverageCategoriesDialog, DiaryImportDialog,
+    PercentDialog, BeverageCategoriesDialog,
 )
 
 
@@ -409,7 +409,7 @@ class DayFrame(QWidget):
         tb.addStretch()
         layout.addLayout(tb)
 
-        # 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà org. 6=Qtà(g) 7=BDA 8=Stato 9=NOVA 10=mNOVA
+        # 0=Pasto 1=Ora 2=Luogo 3=Alimento 4=Note 5=Qtà rif. 6=Qtà(g) 7=BDA 8=Stato 9=NOVA 10=mNOVA
         self._qty_col   = 6
         self._nova_col  = 9
         self._mnova_col = 10
@@ -417,7 +417,7 @@ class DayFrame(QWidget):
         self.tree.setFont(_ui_font())
         self.tree.setHeaderLabels([
             "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
-            "Qtà org.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
+            "Qtà rif.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
         ])
         self.tree.setColumnWidth(0, 110)
         self.tree.setColumnWidth(1, 60)
@@ -802,7 +802,7 @@ class NutriSummaryFrame(QWidget):
 
         row_defs = [
             ("g/day",          lambda c: f"{grams[c]:.2f}"),
-            ("Kcal",           lambda c: f"{kcal[c]:.2f}"),
+            ("Kcal/day",       lambda c: f"{kcal[c]:.2f}"),
             ("%Kcal/Kcaltot",  lambda c: f"{(kcal[c] / total_kcal * 100):.2f}%" if total_kcal else "0.00%"),
         ]
         for r, (label, fmt) in enumerate(row_defs):
@@ -858,10 +858,6 @@ class DiaryTab(QWidget):
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         left_layout.addWidget(sep)
-
-        btn_import = QPushButton("Importa da Excel")
-        btn_import.clicked.connect(self._import_diary)
-        left_layout.addWidget(btn_import)
 
         btn_import_ce = QPushButton("Importa Content Export")
         btn_import_ce.clicked.connect(self._import_content_export)
@@ -1192,84 +1188,6 @@ class DiaryTab(QWidget):
             QMessageBox.information(self, "Esporta", f"Esportazione completata:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Errore", f"Impossibile salvare il file:\n{exc}")
-
-    def _import_diary(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Seleziona file diario", "",
-            "Excel (*.xlsx *.xls);;CSV (*.csv);;Tutti i file (*.*)",
-        )
-        if not path:
-            return
-        try:
-            df = pd.read_csv(path) if path.lower().endswith(".csv") else pd.read_excel(path)
-        except Exception as exc:
-            QMessageBox.critical(self, "Errore lettura file", str(exc))
-            return
-
-        dlg = DiaryImportDialog(self, df)
-        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.value:
-            return
-
-        mapping = dlg.value
-        imported, skipped = 0, 0
-        total = len(df)
-        last_food: dict[tuple, str] = {}
-
-        progress = QProgressDialog("Importazione diario in corso…", None, 0, total, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
-        for i, (_, row) in enumerate(df.iterrows()):
-            try:
-                user_code = str(row[mapping["user_code"]]).strip()
-                day = int(float(str(row[mapping["day"]]).strip()))
-                meal = str(row[mapping["meal"]]).strip()
-                food = str(row[mapping["food_name"]]).strip()
-
-                if not user_code or user_code.lower() == "nan":
-                    continue
-                if not food or food.lower() == "nan":
-                    food = last_food.get((user_code, day, meal), "")
-                if not food:
-                    continue
-                last_food[(user_code, day, meal)] = food
-                if day not in DAYS:
-                    skipped += 1
-                    continue
-
-                qty = 100.0
-                if mapping.get("quantity_g"):
-                    try:
-                        qty = float(str(row[mapping["quantity_g"]]).replace(",", "."))
-                    except (ValueError, TypeError):
-                        pass
-
-                notes = ""
-                if mapping.get("notes"):
-                    notes = str(row[mapping["notes"]]).strip()
-                    if notes.lower() == "nan":
-                        notes = ""
-
-                self.db.add_user(user_code)
-                self.db.add_entry(user_code, day, meal, food, qty, notes)
-                imported += 1
-            except Exception:
-                skipped += 1
-            if i % 100 == 0:
-                progress.setValue(i)
-                QApplication.processEvents()
-
-        progress.setValue(total)
-
-        msg = f"Importate {imported} voci."
-        if skipped:
-            msg += f"\n{skipped} righe ignorate per errori o dati mancanti."
-        QMessageBox.information(self, "Importazione completata", msg)
-        self.refresh_users()
-        if self.on_change:
-            self.on_change()
-        if self.current_user:
-            self._on_user_change(self.user_list.currentRow())
 
     def _import_content_export(self):
         """Importa il file Content_Export: 6 fogli concatenati orizzontalmente,
