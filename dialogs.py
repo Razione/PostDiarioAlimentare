@@ -720,46 +720,53 @@ class BeverageCategoriesDialog(QDialog):
 
 
 class TextSizeDialog(QDialog):
-    """Preferenze: dimensione del testo dell'interfaccia (font globale).
+    """Preferenze: dimensione del testo, separata per interfaccia e tabelle.
 
-    Imposta un valore preciso in punti, con anteprima applicata subito a tutta
-    l'app tramite `on_preview`; «Annulla» ripristina (gestito dal chiamante).
+    Due valori in punti con anteprima applicata subito (callback `on_ui` e
+    `on_table`); «Annulla» ripristina (gestito dal chiamante).
     """
 
-    def __init__(self, parent, current_pt, default_pt,
-                 min_pt=8, max_pt=28, on_preview=None):
+    def __init__(self, parent, ui_pt, table_pt, default_ui, default_table,
+                 min_pt=8, max_pt=28, on_ui=None, on_table=None):
         super().__init__(parent)
-        self.value = int(current_pt)
-        self._default_pt = int(default_pt)
-        self._on_preview = on_preview
+        self.value_ui = int(ui_pt)
+        self.value_table = int(table_pt)
+        self._default_ui = int(default_ui)
+        self._default_table = int(default_table)
+        self._on_ui = on_ui
+        self._on_table = on_table
         self.setWindowTitle("Preferenze – Dimensione testo")
-        self.setFixedSize(420, 190)
+        self.setFixedSize(460, 210)
 
         layout = QVBoxLayout(self)
         lbl = QLabel(
-            "Dimensione del testo dell'interfaccia, in punti.<br>"
-            "L'anteprima si applica subito a tutta l'app; «Annulla» ripristina "
-            "il valore precedente."
+            "Dimensione del testo, in punti. L'anteprima si applica subito; "
+            "«Annulla» ripristina i valori precedenti."
         )
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Dimensione:"))
-        self.spin = QSpinBox()
-        self.spin.setRange(min_pt, max_pt)
-        self.spin.setValue(self.value)
-        self.spin.setSuffix(" pt")
-        self.spin.valueChanged.connect(self._changed)
-        row.addWidget(self.spin)
-        btn_default = QPushButton("Predefinito")
-        btn_default.clicked.connect(lambda: self.spin.setValue(self._default_pt))
-        row.addWidget(btn_default)
-        row.addStretch()
-        layout.addLayout(row)
+        form = QFormLayout()
+        self.spin_ui = QSpinBox()
+        self.spin_ui.setRange(min_pt, max_pt)
+        self.spin_ui.setValue(self.value_ui)
+        self.spin_ui.setSuffix(" pt")
+        self.spin_ui.valueChanged.connect(self._ui_changed)
+        form.addRow("Interfaccia (menu, pulsanti, liste):", self.spin_ui)
+
+        self.spin_table = QSpinBox()
+        self.spin_table.setRange(min_pt, max_pt)
+        self.spin_table.setValue(self.value_table)
+        self.spin_table.setSuffix(" pt")
+        self.spin_table.valueChanged.connect(self._table_changed)
+        form.addRow("Tabelle (diario, riepilogo, BDA):", self.spin_table)
+        layout.addLayout(form)
 
         layout.addStretch()
         btn_row = QHBoxLayout()
+        btn_default = QPushButton("Predefiniti")
+        btn_default.clicked.connect(self._reset_defaults)
+        btn_row.addWidget(btn_default)
         btn_row.addStretch()
         btn_cancel = QPushButton("Annulla")
         btn_cancel.clicked.connect(self.reject)
@@ -770,7 +777,16 @@ class TextSizeDialog(QDialog):
         btn_row.addWidget(btn_ok)
         layout.addLayout(btn_row)
 
-    def _changed(self, v):
-        self.value = int(v)
-        if self._on_preview:
-            self._on_preview(self.value)
+    def _ui_changed(self, v):
+        self.value_ui = int(v)
+        if self._on_ui:
+            self._on_ui(self.value_ui)
+
+    def _table_changed(self, v):
+        self.value_table = int(v)
+        if self._on_table:
+            self._on_table(self.value_table)
+
+    def _reset_defaults(self):
+        self.spin_ui.setValue(self._default_ui)
+        self.spin_table.setValue(self._default_table)

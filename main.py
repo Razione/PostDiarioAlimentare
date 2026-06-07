@@ -32,11 +32,12 @@ def resource_path(rel: str) -> str:
     return os.path.join(base, rel)
 
 
-# Dimensione testo di default dell'interfaccia. Su macOS più grande, perché
-# il rendering risulta piccolo; modificabile a runtime da menu «Visualizza».
-# I widget non impostano font espliciti: ereditano il font globale dell'app,
-# così «Dimensione testo» ridimensiona TUTTA l'interfaccia in modo uniforme.
+# Dimensioni testo di default (punti). Due valori distinti, regolabili da
+# «Visualizza → Dimensione testo»: uno per l'interfaccia (menu, pulsanti,
+# liste) e uno per le tabelle dati (diario, riepilogo, BDA). Su macOS più
+# grande, perché il rendering risulta piccolo.
 _DEFAULT_UI_PT = 14 if sys.platform == "darwin" else 10
+_DEFAULT_TABLE_PT = _DEFAULT_UI_PT      # font delle tabelle dati, regolabile a parte
 _MIN_UI_PT, _MAX_UI_PT = 8, 28
 
 from constants import (
@@ -749,7 +750,7 @@ class NutriSummaryFrame(QWidget):
             it = QTableWidgetItem(text)
             it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if bold:
-                f = QFont()
+                f = QFont(table.font())
                 f.setBold(True)
                 it.setFont(f)
             return it
@@ -763,7 +764,7 @@ class NutriSummaryFrame(QWidget):
 
             name_item = QTableWidgetItem(str(label))
             if bold:
-                f = QFont()
+                f = QFont(table.font())
                 f.setBold(True)
                 name_item.setFont(f)
             table.setItem(row, 0, name_item)
@@ -787,7 +788,7 @@ class NutriSummaryFrame(QWidget):
             if align_right:
                 it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if bold:
-                f = QFont()
+                f = QFont(table.font())
                 f.setBold(True)
                 it.setFont(f)
             return it
@@ -1312,9 +1313,11 @@ class App(QMainWindow):
         self.setMinimumSize(850, 520)
 
         self.db = Database()
-        self._apply_saved_ui_font()
+        self._load_font_prefs()
+        self._apply_interface_font()     # font interfaccia (globale) prima di costruire
         self._build_menu()
         self._build_ui()
+        self._apply_table_font()         # font tabelle dati (dopo aver creato le viste)
         self.diary_tab.refresh_users()
 
     def _build_menu(self):
@@ -1390,58 +1393,100 @@ class App(QMainWindow):
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)
 
-    # ── Dimensione testo (font globale) ───────────────────────────────────
+    # ── Dimensione testo: interfaccia e tabelle, separate ─────────────────
 
-    def _apply_saved_ui_font(self):
-        raw = self.db.get_setting("ui_font_pt")
+    @staticmethod
+    def _clamp_pt(pt):
+        return max(_MIN_UI_PT, min(_MAX_UI_PT, int(pt)))
+
+    def _read_pt(self, key, default):
+        raw = self.db.get_setting(key)
         try:
-            pt = int(raw) if raw else _DEFAULT_UI_PT
+            return self._clamp_pt(raw) if raw else default
         except (TypeError, ValueError):
-            pt = _DEFAULT_UI_PT
-        self._set_ui_font_pt(pt, persist=False)
+            return default
 
-    def _set_ui_font_pt(self, pt, persist=True):
-        pt = max(_MIN_UI_PT, min(_MAX_UI_PT, int(pt)))
-        self._ui_font_pt = pt
+    def _load_font_prefs(self):
+        self._ui_font_pt = self._read_pt("ui_font_pt", _DEFAULT_UI_PT)
+        self._table_font_pt = self._read_pt("table_font_pt", _DEFAULT_TABLE_PT)
 
-        # Default per i widget creati in seguito (es. dialog).
+    def _data_view_widgets(self):
+        """Le tabelle/alberi dei dati (diario, riepilogo, BDA)."""
+        views = []
+        if getattr(self, "bda_tab", None):
+            views.append(self.bda_tab.tree)
+        dt = getattr(self, "diary_tab", None)
+        if dt:
+            views += [frm.tree for frm in dt.day_frames]
+            nf = dt.nutri_frame
+            views += list(nf.nutri_tables.values()) + list(nf.mnova_tables.values())
+        return views
+
+    def _apply_interface_font(self):
+        """Font dell'interfaccia: default app + propagazione a tutti i widget."""
+        pt = self._ui_font_pt
         f = QApplication.font()
         f.setPointSize(pt)
         QApplication.setFont(f)
-
-        # QApplication.setFont() a runtime non ripropaga ai contenuti di
-        # tabelle/alberi già creati: forziamo la dimensione su ogni widget.
+        # setFont() a runtime non ripropaga ai widget esistenti: forziamo.
         for w in QApplication.allWidgets():
             wf = w.font()
             if wf.pointSize() != pt:
                 wf.setPointSize(pt)
                 w.setFont(wf)
 
-        # Le celle con font esplicito (grassetto/corsivo) si ricreano solo a
-        # ricarica: ricarico l'utente corrente per applicare la nuova misura.
-        if getattr(self, "diary_tab", None) and self.diary_tab.current_user:
-            self.diary_tab._on_user_change(self.diary_tab.user_list.currentRow())
+    def _apply_table_font(self):
+        """Font delle sole tabelle dati (sovrascrive quello d'interfaccia)."""
+        pt = self._table_font_pt
+        for v in self._data_view_widgets():
+            wf = v.font()
+            if wf.pointSize() != pt:
+                wf.setPointSize(pt)
+                v.setFont(wf)
 
+    def _reload_current_user(self):
+        """Ricarica l'utente corrente per rigenerare le celle con font esplicito."""
+        dt = getattr(self, "diary_tab", None)
+        if dt and dt.current_user:
+            dt._on_user_change(dt.user_list.currentRow())
+
+    def _set_ui_font_pt(self, pt, persist=True):
+        self._ui_font_pt = self._clamp_pt(pt)
+        self._apply_interface_font()
+        self._apply_table_font()       # ripristina la misura tabelle dopo la propagazione
+        self._reload_current_user()
         if persist:
-            self.db.set_setting("ui_font_pt", pt)
+            self.db.set_setting("ui_font_pt", self._ui_font_pt)
+
+    def _set_table_font_pt(self, pt, persist=True):
+        self._table_font_pt = self._clamp_pt(pt)
+        self._apply_table_font()
+        self._reload_current_user()
+        if persist:
+            self.db.set_setting("table_font_pt", self._table_font_pt)
 
     def _change_text_size(self, delta):
-        self._set_ui_font_pt(getattr(self, "_ui_font_pt", _DEFAULT_UI_PT) + delta)
+        self._set_ui_font_pt(self._ui_font_pt + delta)
+        self._set_table_font_pt(self._table_font_pt + delta)
 
     def _reset_text_size(self):
         self._set_ui_font_pt(_DEFAULT_UI_PT)
+        self._set_table_font_pt(_DEFAULT_TABLE_PT)
 
     def _open_text_size(self):
-        original = getattr(self, "_ui_font_pt", _DEFAULT_UI_PT)
+        orig_ui, orig_table = self._ui_font_pt, self._table_font_pt
         dlg = TextSizeDialog(
-            self, original, _DEFAULT_UI_PT,
+            self, orig_ui, orig_table, _DEFAULT_UI_PT, _DEFAULT_TABLE_PT,
             min_pt=_MIN_UI_PT, max_pt=_MAX_UI_PT,
-            on_preview=lambda pt: self._set_ui_font_pt(pt, persist=False),
+            on_ui=lambda pt: self._set_ui_font_pt(pt, persist=False),
+            on_table=lambda pt: self._set_table_font_pt(pt, persist=False),
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._set_ui_font_pt(dlg.value, persist=True)
+            self._set_ui_font_pt(dlg.value_ui, persist=True)
+            self._set_table_font_pt(dlg.value_table, persist=True)
         else:
-            self._set_ui_font_pt(original, persist=False)   # ripristina l'anteprima
+            self._set_ui_font_pt(orig_ui, persist=False)
+            self._set_table_font_pt(orig_table, persist=False)
 
     def _build_ui(self):
         self.nb = QTabWidget()
