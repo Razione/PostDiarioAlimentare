@@ -790,3 +790,72 @@ class TextSizeDialog(QDialog):
     def _reset_defaults(self):
         self.spin_ui.setValue(self._default_ui)
         self.spin_table.setValue(self._default_table)
+
+
+class MergeConflictsDialog(QDialog):
+    """Unione progetto: scelta degli utenti già associati da sovrascrivere."""
+
+    def __init__(self, parent, conflict_codes, n_new=0, n_auto=0):
+        super().__init__(parent)
+        self.selected = []
+        self.setWindowTitle("Unisci progetto – conflitti")
+        self.resize(420, 460)
+
+        layout = QVBoxLayout(self)
+        intro = []
+        if n_new:
+            intro.append(f"{n_new} nuovi utenti verranno aggiunti.")
+        if n_auto:
+            intro.append(f"{n_auto} utenti senza associazioni verranno aggiornati.")
+        text = (
+            "Questi utenti esistono già e hanno associazioni BDA.<br>"
+            "Spunta quelli da <b>sovrascrivere</b> con la versione importata; "
+            "gli altri restano invariati."
+        )
+        if intro:
+            text = "• " + "<br>• ".join(intro) + "<br><br>" + text
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        self.list = QListWidget()
+        for code in conflict_codes:
+            it = QListWidgetItem(str(code))
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Unchecked)
+            self.list.addItem(it)
+        layout.addWidget(self.list)
+
+        sel_row = QHBoxLayout()
+        btn_all = QPushButton("Seleziona tutti")
+        btn_all.clicked.connect(lambda: self._set_all(True))
+        sel_row.addWidget(btn_all)
+        btn_none = QPushButton("Deseleziona tutti")
+        btn_none.clicked.connect(lambda: self._set_all(False))
+        sel_row.addWidget(btn_none)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Applica")
+        btn_ok.clicked.connect(self._ok)
+        btn_ok.setDefault(True)
+        btn_row.addWidget(btn_ok)
+        layout.addLayout(btn_row)
+
+    def _set_all(self, checked):
+        st = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for i in range(self.list.count()):
+            self.list.item(i).setCheckState(st)
+
+    def _ok(self):
+        self.selected = [
+            self.list.item(i).text()
+            for i in range(self.list.count())
+            if self.list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+        self.accept()

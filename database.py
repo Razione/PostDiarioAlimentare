@@ -546,49 +546,91 @@ class Database:
                 self._insert_rows(conn, "bda_categories", data["bda_categories"])
         self._bda_columns_cache = None
 
-    def merge_project(self, data: dict) -> dict:
-        """Aggiunge gli utenti del file (col loro diario) ai dati esistenti.
+    @staticmethod
+    def _user_assoc_counts(conn):
+        """{user_code: numero di voci con un alimento BDA associato}."""
+        return {
+            r["user_code"]: r["n"]
+            for r in conn.execute(
+                "SELECT user_code, COUNT(*) AS n FROM diary_entries "
+                "WHERE bda_food_id IS NOT NULL GROUP BY user_code"
+            )
+        }
 
-        I codici utente già presenti vengono rinominati ('codice (2)', …) per
-        non sovrascrivere. Non tocca settings né BDA: per ri-agganciare gli
-        alimenti usa poi «Verifica / riassegna BDA».
-        Returns {'added': [nuovi codici], 'renamed': {vecchio: nuovo}}.
+    def merge_analysis(self, data: dict) -> dict:
+        """Classifica gli utenti del file rispetto al DB locale.
+
+        Returns {'new': [...], 'auto_update': [...], 'conflict': [...]}:
+        - new         – non presenti in locale → verranno aggiunti;
+        - auto_update – presenti ma senza alcuna associazione BDA → sostituiti;
+        - conflict    – presenti e con associazioni → richiedono conferma.
         """
-        report = {"added": [], "renamed": {}}
         with self._conn() as conn:
-            existing = {r["code"] for r in conn.execute("SELECT code FROM users")}
-            mapping = {}
-            for u in data.get("users", []):
-                old = u.get("code")
-                if old is None:
-                    continue
-                new, n = old, 2
-                while new in existing:
-                    new = f"{old} ({n})"
-                    n += 1
-                existing.add(new)
-                mapping[old] = new
-                conn.execute("INSERT INTO users (code, notes) VALUES (?,?)",
-                             (new, u.get("notes", "")))
-                report["added"].append(new)
-                if new != old:
-                    report["renamed"][old] = new
+            local = {r["code"] for r in conn.execute("SELECT code FROM users")}
+            assoc = self._user_assoc_counts(conn)
+        out = {"new": [], "auto_update": [], "conflict": []}
+        for u in data.get("users", []):
+            code = u.get("code")
+            if code is None:
+                continue
+            if code not in local:
+                out["new"].append(code)
+            elif assoc.get(code, 0) == 0:
+                out["auto_update"].append(code)
+            else:
+                out["conflict"].append(code)
+        return out
 
-            for m in data.get("diary_day_meta", []):
-                uc = mapping.get(m.get("user_code"))
-                if uc is None:
-                    continue
-                conn.execute(
-                    "INSERT OR REPLACE INTO diary_day_meta "
-                    "(user_code, day, date_label) VALUES (?,?,?)",
-                    (uc, m.get("day"), m.get("date_label", "")),
-                )
+    def apply_merge_project(self, data: dict, overwrite_codes=None) -> dict:
+        """Unisce il progetto sostituendo l'intero diario per utente.
 
-            for e in data.get("diary_entries", []):
-                uc = mapping.get(e.get("user_code"))
-                if uc is None:
+        - utente nuovo            → aggiunto;
+        - presente senza assoc.   → diario sostituito con quello importato;
+        - presente con assoc.     → sostituito solo se in `overwrite_codes`,
+                                     altrimenti lasciato invariato.
+        Non tocca settings né BDA. Returns {'added','updated','kept'}.
+        """
+        overwrite = set(overwrite_codes or [])
+        report = {"added": [], "updated": [], "kept": []}
+
+        users = {u["code"]: u for u in data.get("users", [])
+                 if u.get("code") is not None}
+        entries_by_user, meta_by_user = {}, {}
+        for e in data.get("diary_entries", []):
+            entries_by_user.setdefault(e.get("user_code"), []).append(e)
+        for m in data.get("diary_day_meta", []):
+            meta_by_user.setdefault(m.get("user_code"), []).append(m)
+
+        with self._conn() as conn:
+            local = {r["code"] for r in conn.execute("SELECT code FROM users")}
+            assoc = self._user_assoc_counts(conn)
+            for code, u in users.items():
+                is_new = code not in local
+                if is_new:
+                    report["added"].append(code)
+                elif assoc.get(code, 0) == 0 or code in overwrite:
+                    report["updated"].append(code)
+                else:
+                    report["kept"].append(code)
                     continue
-                row = {k: v for k, v in e.items() if k != "id"}  # id auto-assegnato
-                row["user_code"] = uc
-                self._insert_rows(conn, "diary_entries", [row])
+
+                if is_new:
+                    conn.execute("INSERT INTO users (code, notes) VALUES (?,?)",
+                                 (code, u.get("notes", "")))
+                else:  # sostituzione: ripulisco il diario locale dell'utente
+                    conn.execute("DELETE FROM diary_entries WHERE user_code=?", (code,))
+                    conn.execute("DELETE FROM diary_day_meta WHERE user_code=?", (code,))
+                    conn.execute("UPDATE users SET notes=? WHERE code=?",
+                                 (u.get("notes", ""), code))
+
+                for m in meta_by_user.get(code, []):
+                    conn.execute(
+                        "INSERT OR REPLACE INTO diary_day_meta "
+                        "(user_code, day, date_label) VALUES (?,?,?)",
+                        (code, m.get("day"), m.get("date_label", "")),
+                    )
+                for e in entries_by_user.get(code, []):
+                    row = {k: v for k, v in e.items() if k != "id"}
+                    row["user_code"] = code
+                    self._insert_rows(conn, "diary_entries", [row])
         return report

@@ -54,6 +54,7 @@ from dialogs import (
     BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
     PreferencesDialog, FormulaDialog, SpecialValuesDialog,
     PercentDialog, BeverageCategoriesDialog, TextSizeDialog,
+    MergeConflictsDialog,
 )
 
 
@@ -1660,8 +1661,9 @@ class App(QMainWindow):
         box.setInformativeText(
             "<b>Sostituisci tutto</b>: rimpiazza i dati attuali con quelli del file"
             + (" (BDA e configurazione comprese)." if has_bda or has_cfg else ".")
-            + "<br><b>Unisci</b>: aggiunge gli utenti del file a quelli esistenti "
-            "(i codici già presenti vengono rinominati); non tocca BDA né configurazione."
+            + "<br><b>Unisci</b>: aggiunge i nuovi utenti; quelli già presenti senza "
+            "associazioni vengono aggiornati, per quelli già associati chiede conferma. "
+            "Non tocca BDA né configurazione."
         )
         btn_replace = box.addButton("Sostituisci tutto", QMessageBox.ButtonRole.DestructiveRole)
         btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
@@ -1675,15 +1677,28 @@ class App(QMainWindow):
             QMessageBox.information(self, "Progetto importato",
                                     "I dati attuali sono stati sostituiti.")
         elif clicked is btn_merge:
-            rep = self.db.merge_project(data)
+            analysis = self.db.merge_analysis(data)
+            overwrite = []
+            if analysis["conflict"]:
+                cdlg = MergeConflictsDialog(
+                    self, analysis["conflict"],
+                    n_new=len(analysis["new"]),
+                    n_auto=len(analysis["auto_update"]),
+                )
+                if cdlg.exec() != QDialog.DialogCode.Accepted:
+                    return  # annullato → nessuna modifica
+                overwrite = cdlg.selected
+
+            rep = self.db.apply_merge_project(data, overwrite)
             self._refresh_all()
-            msg = f"Aggiunti {len(rep['added'])} utenti."
-            if rep["renamed"]:
-                msg += ("\n\nRinominati (codice già esistente):\n  "
-                        + "\n  ".join(f"{o} → {n}" for o, n in rep["renamed"].items()))
+            msg = (f"Aggiunti: {len(rep['added'])}\n"
+                   f"Aggiornati: {len(rep['updated'])}\n"
+                   f"Mantenuti invariati: {len(rep['kept'])}")
+            if rep["kept"]:
+                msg += "\n\nMantenuti (non sovrascritti):\n  " + "\n  ".join(rep["kept"])
             msg += ("\n\nSe gli alimenti non risultano associati, usa "
                     "«Verifica / riassegna BDA».")
-            QMessageBox.information(self, "Progetto importato", msg)
+            QMessageBox.information(self, "Progetto unito", msg)
 
     def _about(self):
         QMessageBox.information(
