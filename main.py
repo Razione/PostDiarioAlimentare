@@ -31,6 +31,20 @@ def resource_path(rel: str) -> str:
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, rel)
 
+
+# Font UI cross-piattaforma: nessuna famiglia hardcoded ("Segoe UI" non esiste
+# su macOS). Base 13pt su macOS, 11pt altrove, così i testi non risultano
+# rimpiccioliti rispetto al font di sistema del Mac.
+_UI_BASE_PT = 13 if sys.platform == "darwin" else 11
+
+
+def _ui_font(delta: int = 0, bold: bool = False) -> QFont:
+    f = QFont()                       # famiglia di sistema predefinita
+    f.setPointSize(_UI_BASE_PT + delta)
+    if bold:
+        f.setWeight(QFont.Weight.Bold)
+    return f
+
 from constants import (
     MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
     ENERGY_LABEL, _MNOVA_COLS,
@@ -263,7 +277,7 @@ class UsersTab(QWidget):
         self.search_user.textChanged.connect(self._filter_users)
         left_layout.addWidget(self.search_user)
         self.list_widget = QListWidget()
-        self.list_widget.setFont(QFont("Segoe UI", 11))
+        self.list_widget.setFont(_ui_font())
         self.list_widget.currentRowChanged.connect(self._on_select)
         left_layout.addWidget(self.list_widget)
         btn_add = QPushButton("Aggiungi")
@@ -280,7 +294,7 @@ class UsersTab(QWidget):
 
         top_form = QFormLayout()
         self.code_lbl = QLabel("—")
-        self.code_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.code_lbl.setFont(_ui_font(bold=True))
         top_form.addRow("Codice:", self.code_lbl)
         self.stats_lbl = QLabel("")
         self.stats_lbl.setStyleSheet("color: gray;")
@@ -400,7 +414,7 @@ class DayFrame(QWidget):
         self._nova_col  = 9
         self._mnova_col = 10
         self.tree = QTreeWidget()
-        self.tree.setFont(QFont("Segoe UI", 11))
+        self.tree.setFont(_ui_font())
         self.tree.setHeaderLabels([
             "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
             "Qtà org.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
@@ -828,7 +842,7 @@ class DiaryTab(QWidget):
         left_layout.addWidget(self.search_user)
 
         self.user_list = QListWidget()
-        self.user_list.setFont(QFont("Segoe UI", 11))
+        self.user_list.setFont(_ui_font())
         self.user_list.currentRowChanged.connect(self._on_user_change)
         self.user_list.itemChanged.connect(self._on_check_changed)
         left_layout.addWidget(self.user_list)
@@ -879,6 +893,10 @@ class DiaryTab(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         right_top = QHBoxLayout()
+        self.btn_toggle_users = QPushButton("◀ Nascondi utenti")
+        self.btn_toggle_users.setToolTip("Mostra/nascondi la barra degli utenti")
+        self.btn_toggle_users.clicked.connect(self._toggle_users_panel)
+        right_top.addWidget(self.btn_toggle_users)
         right_top.addStretch()
         btn_verify = QPushButton("Verifica / riassegna BDA")
         btn_verify.setToolTip(
@@ -906,8 +924,22 @@ class DiaryTab(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([180, 900])
+        self.splitter = splitter
+        self._saved_sizes = None
 
         layout.addWidget(splitter)
+
+    def _toggle_users_panel(self):
+        """Comprime/espande la barra utenti (alternativa al trascinamento)."""
+        if self.users_group.isVisible():
+            self._saved_sizes = self.splitter.sizes()
+            self.users_group.setVisible(False)
+            self.btn_toggle_users.setText("▶ Mostra utenti")
+        else:
+            self.users_group.setVisible(True)
+            if self._saved_sizes:
+                self.splitter.setSizes(self._saved_sizes)
+            self.btn_toggle_users.setText("◀ Nascondi utenti")
 
     def _filter_users(self, text=""):
         q = text.strip().lower()
