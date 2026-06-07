@@ -7,7 +7,7 @@ import pandas as pd
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QPushButton, QLabel, QLineEdit, QComboBox,
+    QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox,
     QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem,
     QFrame, QMessageBox, QHeaderView, QAbstractItemView,
@@ -717,3 +717,60 @@ class BeverageCategoriesDialog(QDialog):
         ]
         self.db.set_setting("beverage_categories", json.dumps(codes, ensure_ascii=False))
         self.accept()
+
+
+class TextSizeDialog(QDialog):
+    """Preferenze: dimensione del testo dell'interfaccia (font globale).
+
+    Imposta un valore preciso in punti, con anteprima applicata subito a tutta
+    l'app tramite `on_preview`; «Annulla» ripristina (gestito dal chiamante).
+    """
+
+    def __init__(self, parent, current_pt, default_pt,
+                 min_pt=8, max_pt=28, on_preview=None):
+        super().__init__(parent)
+        self.value = int(current_pt)
+        self._default_pt = int(default_pt)
+        self._on_preview = on_preview
+        self.setWindowTitle("Preferenze – Dimensione testo")
+        self.setFixedSize(420, 190)
+
+        layout = QVBoxLayout(self)
+        lbl = QLabel(
+            "Dimensione del testo dell'interfaccia, in punti.<br>"
+            "L'anteprima si applica subito a tutta l'app; «Annulla» ripristina "
+            "il valore precedente."
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Dimensione:"))
+        self.spin = QSpinBox()
+        self.spin.setRange(min_pt, max_pt)
+        self.spin.setValue(self.value)
+        self.spin.setSuffix(" pt")
+        self.spin.valueChanged.connect(self._changed)
+        row.addWidget(self.spin)
+        btn_default = QPushButton("Predefinito")
+        btn_default.clicked.connect(lambda: self.spin.setValue(self._default_pt))
+        row.addWidget(btn_default)
+        row.addStretch()
+        layout.addLayout(row)
+
+        layout.addStretch()
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("Salva")
+        btn_ok.clicked.connect(self.accept)
+        btn_ok.setDefault(True)
+        btn_row.addWidget(btn_ok)
+        layout.addLayout(btn_row)
+
+    def _changed(self, v):
+        self.value = int(v)
+        if self._on_preview:
+            self._on_preview(self.value)

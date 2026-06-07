@@ -52,7 +52,7 @@ from delegates import _DayFrameDelegate
 from dialogs import (
     BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
     PreferencesDialog, FormulaDialog, SpecialValuesDialog,
-    PercentDialog, BeverageCategoriesDialog,
+    PercentDialog, BeverageCategoriesDialog, TextSizeDialog,
 )
 
 
@@ -1368,6 +1368,10 @@ class App(QMainWindow):
 
         view_m = mb.addMenu("Visualizza")
         assert view_m is not None
+        act_text_size = QAction("Dimensione testo…", self)
+        act_text_size.triggered.connect(self._open_text_size)
+        view_m.addAction(act_text_size)
+        view_m.addSeparator()
         act_bigger = QAction("Aumenta testo", self)
         act_bigger.setShortcut(QKeySequence.StandardKey.ZoomIn)
         act_bigger.triggered.connect(lambda: self._change_text_size(+1))
@@ -1399,9 +1403,25 @@ class App(QMainWindow):
     def _set_ui_font_pt(self, pt, persist=True):
         pt = max(_MIN_UI_PT, min(_MAX_UI_PT, int(pt)))
         self._ui_font_pt = pt
+
+        # Default per i widget creati in seguito (es. dialog).
         f = QApplication.font()
         f.setPointSize(pt)
         QApplication.setFont(f)
+
+        # QApplication.setFont() a runtime non ripropaga ai contenuti di
+        # tabelle/alberi già creati: forziamo la dimensione su ogni widget.
+        for w in QApplication.allWidgets():
+            wf = w.font()
+            if wf.pointSize() != pt:
+                wf.setPointSize(pt)
+                w.setFont(wf)
+
+        # Le celle con font esplicito (grassetto/corsivo) si ricreano solo a
+        # ricarica: ricarico l'utente corrente per applicare la nuova misura.
+        if getattr(self, "diary_tab", None) and self.diary_tab.current_user:
+            self.diary_tab._on_user_change(self.diary_tab.user_list.currentRow())
+
         if persist:
             self.db.set_setting("ui_font_pt", pt)
 
@@ -1410,6 +1430,18 @@ class App(QMainWindow):
 
     def _reset_text_size(self):
         self._set_ui_font_pt(_DEFAULT_UI_PT)
+
+    def _open_text_size(self):
+        original = getattr(self, "_ui_font_pt", _DEFAULT_UI_PT)
+        dlg = TextSizeDialog(
+            self, original, _DEFAULT_UI_PT,
+            min_pt=_MIN_UI_PT, max_pt=_MAX_UI_PT,
+            on_preview=lambda pt: self._set_ui_font_pt(pt, persist=False),
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._set_ui_font_pt(dlg.value, persist=True)
+        else:
+            self._set_ui_font_pt(original, persist=False)   # ripristina l'anteprima
 
     def _build_ui(self):
         self.nb = QTabWidget()
