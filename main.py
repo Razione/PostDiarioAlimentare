@@ -7,6 +7,7 @@ Lancia con:  python main.py
 import os
 import sys
 import json
+import gzip
 import pandas as pd
 
 from PyQt6.QtWidgets import (
@@ -1484,10 +1485,14 @@ class App(QMainWindow):
         self.diary_tab.refresh_users()
 
     def _read_export_file(self, path):
-        """Legge e valida un file di export. Ritorna il dict o None (con avviso)."""
+        """Legge e valida un file di export (.json o .json.gz, auto-rilevato).
+        Ritorna il dict o None (con avviso)."""
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(path, "rb") as f:
+                raw = f.read()
+            if raw[:2] == b"\x1f\x8b":          # magic gzip
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8"))
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Errore lettura file", str(exc))
             return None
@@ -1500,10 +1505,16 @@ class App(QMainWindow):
         return data
 
     def _write_json(self, path, payload):
+        """Salva il payload come JSON; se il path finisce per .gz, comprime con gzip."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+            if path.lower().endswith(".gz"):
+                with gzip.open(path, "wt", encoding="utf-8") as f:
+                    f.write(text)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
         except OSError as exc:
             QMessageBox.critical(self, "Errore salvataggio", str(exc))
             return False
@@ -1526,7 +1537,8 @@ class App(QMainWindow):
 
     def _import_config(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importa configurazione", "", "JSON (*.json);;Tutti i file (*.*)")
+            self, "Importa configurazione", "",
+            "JSON (*.json *.json.gz);;Tutti i file (*.*)")
         if not path:
             return
         data = self._read_export_file(path)
@@ -1544,7 +1556,8 @@ class App(QMainWindow):
 
     def _export_project(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Esporta progetto", "progetto.json", "JSON (*.json)")
+            self, "Esporta progetto", "progetto.json.gz",
+            "JSON compresso (*.json.gz);;JSON (*.json)")
         if not path:
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1564,7 +1577,8 @@ class App(QMainWindow):
 
     def _import_project(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importa progetto", "", "JSON (*.json);;Tutti i file (*.*)")
+            self, "Importa progetto", "",
+            "JSON (*.json *.json.gz);;Tutti i file (*.*)")
         if not path:
             return
         data = self._read_export_file(path)
