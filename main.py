@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QAction, QIcon
+from PyQt6.QtGui import QColor, QFont, QAction, QIcon, QKeySequence
 
 from database import Database
 
@@ -32,18 +32,12 @@ def resource_path(rel: str) -> str:
     return os.path.join(base, rel)
 
 
-# Font UI cross-piattaforma: nessuna famiglia hardcoded ("Segoe UI" non esiste
-# su macOS). Base 13pt su macOS, 11pt altrove, così i testi non risultano
-# rimpiccioliti rispetto al font di sistema del Mac.
-_UI_BASE_PT = 13 if sys.platform == "darwin" else 11
-
-
-def _ui_font(delta: int = 0, bold: bool = False) -> QFont:
-    f = QFont()                       # famiglia di sistema predefinita
-    f.setPointSize(_UI_BASE_PT + delta)
-    if bold:
-        f.setWeight(QFont.Weight.Bold)
-    return f
+# Dimensione testo di default dell'interfaccia. Su macOS più grande, perché
+# il rendering risulta piccolo; modificabile a runtime da menu «Visualizza».
+# I widget non impostano font espliciti: ereditano il font globale dell'app,
+# così «Dimensione testo» ridimensiona TUTTA l'interfaccia in modo uniforme.
+_DEFAULT_UI_PT = 14 if sys.platform == "darwin" else 10
+_MIN_UI_PT, _MAX_UI_PT = 8, 28
 
 from constants import (
     MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
@@ -277,7 +271,6 @@ class UsersTab(QWidget):
         self.search_user.textChanged.connect(self._filter_users)
         left_layout.addWidget(self.search_user)
         self.list_widget = QListWidget()
-        self.list_widget.setFont(_ui_font())
         self.list_widget.currentRowChanged.connect(self._on_select)
         left_layout.addWidget(self.list_widget)
         btn_add = QPushButton("Aggiungi")
@@ -294,7 +287,7 @@ class UsersTab(QWidget):
 
         top_form = QFormLayout()
         self.code_lbl = QLabel("—")
-        self.code_lbl.setFont(_ui_font(bold=True))
+        self.code_lbl.setStyleSheet("font-weight: bold;")
         top_form.addRow("Codice:", self.code_lbl)
         self.stats_lbl = QLabel("")
         self.stats_lbl.setStyleSheet("color: gray;")
@@ -414,7 +407,6 @@ class DayFrame(QWidget):
         self._nova_col  = 9
         self._mnova_col = 10
         self.tree = QTreeWidget()
-        self.tree.setFont(_ui_font())
         self.tree.setHeaderLabels([
             "Pasto", "Ora", "Luogo", "Alimento (diario)", "Note",
             "Qtà rif.", "Qtà (g)", "Alimento BDA", "Stato", "NOVA", "mNOVA",
@@ -842,7 +834,6 @@ class DiaryTab(QWidget):
         left_layout.addWidget(self.search_user)
 
         self.user_list = QListWidget()
-        self.user_list.setFont(_ui_font())
         self.user_list.currentRowChanged.connect(self._on_user_change)
         self.user_list.itemChanged.connect(self._on_check_changed)
         left_layout.addWidget(self.user_list)
@@ -1321,6 +1312,7 @@ class App(QMainWindow):
         self.setMinimumSize(850, 520)
 
         self.db = Database()
+        self._apply_saved_ui_font()
         self._build_menu()
         self._build_ui()
         self.diary_tab.refresh_users()
@@ -1374,11 +1366,50 @@ class App(QMainWindow):
         act_percent.triggered.connect(self._open_percent)
         pref_m.addAction(act_percent)
 
+        view_m = mb.addMenu("Visualizza")
+        assert view_m is not None
+        act_bigger = QAction("Aumenta testo", self)
+        act_bigger.setShortcut(QKeySequence.StandardKey.ZoomIn)
+        act_bigger.triggered.connect(lambda: self._change_text_size(+1))
+        view_m.addAction(act_bigger)
+        act_smaller = QAction("Riduci testo", self)
+        act_smaller.setShortcut(QKeySequence.StandardKey.ZoomOut)
+        act_smaller.triggered.connect(lambda: self._change_text_size(-1))
+        view_m.addAction(act_smaller)
+        act_reset_text = QAction("Reimposta dimensione testo", self)
+        act_reset_text.triggered.connect(self._reset_text_size)
+        view_m.addAction(act_reset_text)
+
         help_m = mb.addMenu("Aiuto")
         assert help_m is not None
         act_about = QAction("Informazioni", self)
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)
+
+    # ── Dimensione testo (font globale) ───────────────────────────────────
+
+    def _apply_saved_ui_font(self):
+        raw = self.db.get_setting("ui_font_pt")
+        try:
+            pt = int(raw) if raw else _DEFAULT_UI_PT
+        except (TypeError, ValueError):
+            pt = _DEFAULT_UI_PT
+        self._set_ui_font_pt(pt, persist=False)
+
+    def _set_ui_font_pt(self, pt, persist=True):
+        pt = max(_MIN_UI_PT, min(_MAX_UI_PT, int(pt)))
+        self._ui_font_pt = pt
+        f = QApplication.font()
+        f.setPointSize(pt)
+        QApplication.setFont(f)
+        if persist:
+            self.db.set_setting("ui_font_pt", pt)
+
+    def _change_text_size(self, delta):
+        self._set_ui_font_pt(getattr(self, "_ui_font_pt", _DEFAULT_UI_PT) + delta)
+
+    def _reset_text_size(self):
+        self._set_ui_font_pt(_DEFAULT_UI_PT)
 
     def _build_ui(self):
         self.nb = QTabWidget()
