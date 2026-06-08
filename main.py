@@ -1107,14 +1107,23 @@ class DiaryTab(QWidget):
         def _pct_label(col):
             return f"{col} (%)"
 
+        # Colonne della ripartizione mNOVA (grammi, kcal e %Kcal/Kcaltot per
+        # categoria), aggiunte di seguito ai valori dei nutrienti.
+        mnova_g_cols = [f"mNOVA {c} (g)" for c in _MNOVA_COLS]
+        mnova_k_cols = [f"mNOVA {c} (kcal)" for c in _MNOVA_COLS]
+        mnova_p_cols = [f"mNOVA {c} (%Kcal/Kcaltot)" for c in _MNOVA_COLS]
+        mnova_cols = mnova_g_cols + mnova_k_cols + mnova_p_cols
+
         # Colonne con valori decimali: ricevono il formato "almeno 2 cifre".
         float_cols = {ENERGY_LABEL}
         float_cols.update(nutrient_cols)
         float_cols.update(_pct_label(c) for c in nutrient_cols if c in percent_cfg)
+        float_cols.update(mnova_cols)
 
         rows = []
         for user_code in sorted(self._checked_users):
             totals, missing = _compute_user_totals(self.db, user_code)
+            mnova_per_day, _ = _compute_mnova_breakdown(self.db, user_code)
             has_any_entry = any(
                 bool(totals[d]) or missing[d] > 0 for d in DAYS
             )
@@ -1132,6 +1141,16 @@ class DiaryTab(QWidget):
                         factor, denom = percent_cfg[col]
                         den = energy if not denom else day_totals.get(denom, 0.0)
                         row[_pct_label(col)] = round(val * factor / den * 100, 4) if den else None
+                grams, kcal = mnova_per_day[day]
+                tot_kcal = kcal["1"] + kcal["2"] + kcal["3a+3b"] + kcal["4a+4b"]
+                for c in _MNOVA_COLS:
+                    row[f"mNOVA {c} (g)"] = round(grams[c], 4)
+                for c in _MNOVA_COLS:
+                    row[f"mNOVA {c} (kcal)"] = round(kcal[c], 4)
+                for c in _MNOVA_COLS:
+                    row[f"mNOVA {c} (%Kcal/Kcaltot)"] = (
+                        round(kcal[c] / tot_kcal * 100, 4) if tot_kcal else None
+                    )
                 row["Voci senza BDA"] = missing[day]
                 rows.append(row)
 
@@ -1147,6 +1166,7 @@ class DiaryTab(QWidget):
             avg_value_cols.append(col)
             if col in percent_cfg:
                 avg_value_cols.append(_pct_label(col))
+        avg_value_cols += mnova_cols
         for user_code in sorted(self._checked_users):
             user_rows = [r for r in rows if r["Utente"] == user_code]
             if not user_rows:
