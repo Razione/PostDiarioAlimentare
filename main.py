@@ -47,14 +47,14 @@ from constants import (
     _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
     _category_code, _load_mnova_config, _compute_mnova,
     _compute_energy_kcal, _compute_user_totals, _compute_mnova_breakdown,
-    _load_percent_config,
+    _load_percent_config, _display_decimals,
 )
 from delegates import _DayFrameDelegate
 from dialogs import (
     BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
     PreferencesDialog, FormulaDialog, SpecialValuesDialog,
     PercentDialog, BeverageCategoriesDialog, TextSizeDialog,
-    MergeConflictsDialog,
+    MergeConflictsDialog, FoodNutrientsDialog,
 )
 
 
@@ -401,6 +401,16 @@ class DayFrame(QWidget):
         btn_remove = QPushButton("Rimuovi assoc.")
         btn_remove.clicked.connect(self._remove_bda)
         tb.addWidget(btn_remove)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        tb.addWidget(sep2)
+
+        btn_nutr = QPushButton("Valori nutrizionali")
+        btn_nutr.setToolTip("Mostra i valori nutrizionali calcolati per la voce selezionata.")
+        btn_nutr.clicked.connect(self._show_food_nutrients)
+        tb.addWidget(btn_nutr)
         tb.addStretch()
         layout.addLayout(tb)
 
@@ -546,6 +556,17 @@ class DayFrame(QWidget):
             return
         self.db.associate_bda(eid, None)
         self._refresh()
+
+    def _show_food_nutrients(self):
+        eid = self._selected_id()
+        if eid is None:
+            QMessageBox.information(self, "Valori nutrizionali", "Seleziona una voce del diario.")
+            return
+        entry = next((e for e in self.db.get_entries(self.user_code, day=self.day)
+                      if e["id"] == eid), None)
+        if entry is None:
+            return
+        FoodNutrientsDialog(self, self.db, entry).exec()
 
     def _on_double_click(self, item, column):
         if column in (self._qty_col, self._nova_col):
@@ -718,11 +739,12 @@ class NutriSummaryFrame(QWidget):
             c: sum(totals[d].get(c, 0.0) for d in DAYS) / n for c in nutrient_cols
         }
 
+        dec = _display_decimals(self.db)
         for scope in self._scopes:
             self._fill_nutri_table(self.nutri_tables[scope], scope_values[scope],
-                                   nutrient_cols, percent_cfg, show_pct)
+                                   nutrient_cols, percent_cfg, show_pct, dec)
 
-        self._fill_mnova_table()
+        self._fill_mnova_table(dec)
 
         warn_parts = [
             f"Giorno {d}: {missing[d]} voci senza BDA"
@@ -731,7 +753,7 @@ class NutriSummaryFrame(QWidget):
         if warn_parts:
             self.warn_lbl.setText("⚠ Non calcolate — " + ", ".join(warn_parts))
 
-    def _fill_nutri_table(self, table, values, nutrient_cols, percent_cfg, show_pct):
+    def _fill_nutri_table(self, table, values, nutrient_cols, percent_cfg, show_pct, dec=2):
         """Popola una tabella nutrienti (Nutriente | Valore | %) per uno scope."""
         headers = ["Nutriente", "Valore"] + (["%"] if show_pct else [])
         table.setColumnCount(len(headers))
@@ -769,19 +791,19 @@ class NutriSummaryFrame(QWidget):
                 f.setBold(True)
                 name_item.setFont(f)
             table.setItem(row, 0, name_item)
-            table.setItem(row, 1, _num_item(f"{val:.2f}", bold))
+            table.setItem(row, 1, _num_item(f"{val:.{dec}f}", bold))
             if show_pct:
-                table.setItem(row, 2, _num_item("" if pct is None else f"{pct:.2f}%", bold))
+                table.setItem(row, 2, _num_item("" if pct is None else f"{pct:.{dec}f}%", bold))
 
-    def _fill_mnova_table(self):
+    def _fill_mnova_table(self, dec=2):
         """Popola le tabelle di ripartizione mNOVA (un giorno per tabella + media)."""
         per_day, media = _compute_mnova_breakdown(self.db, self.user_code)
         data = {d: per_day[d] for d in DAYS}
         data["media"] = media
         for key, (grams, kcal) in data.items():
-            self._fill_one_mnova(self.mnova_tables[key], grams, kcal)
+            self._fill_one_mnova(self.mnova_tables[key], grams, kcal, dec)
 
-    def _fill_one_mnova(self, table, grams, kcal):
+    def _fill_one_mnova(self, table, grams, kcal, dec=2):
         total_kcal = kcal["1"] + kcal["2"] + kcal["3a+3b"] + kcal["4a+4b"]
 
         def _cell(text, bold=False, align_right=True):
@@ -795,9 +817,9 @@ class NutriSummaryFrame(QWidget):
             return it
 
         row_defs = [
-            ("g/day",          lambda c: f"{grams[c]:.2f}"),
-            ("Kcal/day",       lambda c: f"{kcal[c]:.2f}"),
-            ("%Kcal/Kcaltot",  lambda c: f"{(kcal[c] / total_kcal * 100):.2f}%" if total_kcal else "0.00%"),
+            ("g/day",          lambda c: f"{grams[c]:.{dec}f}"),
+            ("Kcal/day",       lambda c: f"{kcal[c]:.{dec}f}"),
+            ("%Kcal/Kcaltot",  lambda c: f"{(kcal[c] / total_kcal * 100):.{dec}f}%" if total_kcal else f"{0:.{dec}f}%"),
         ]
         for r, (label, fmt) in enumerate(row_defs):
             table.setItem(r, 0, _cell(label, bold=True, align_right=False))
@@ -1184,13 +1206,16 @@ class DiaryTab(QWidget):
         df_avg = pd.DataFrame(avg_rows)
         float_cols_avg = float_cols | {"Voci senza BDA (media)"}
 
+        dec = _display_decimals(self.db)
+        num_fmt = "0." + "0" * dec if dec > 0 else "0"
+
         def _apply_decimals(worksheet, columns, float_names):
-            """Imposta il formato celle ad almeno 2 cifre decimali (fino a 4)."""
+            """Formato celle coerente coi decimali scelti nelle preferenze."""
             for ci, cname in enumerate(columns, start=1):
                 if cname not in float_names:
                     continue
                 for r in range(2, worksheet.max_row + 1):
-                    worksheet.cell(row=r, column=ci).number_format = "0.00##"
+                    worksheet.cell(row=r, column=ci).number_format = num_fmt
 
         try:
             with pd.ExcelWriter(path, engine="openpyxl") as writer:
@@ -1389,6 +1414,9 @@ class App(QMainWindow):
         act_percent = QAction("Percentuali…", self)
         act_percent.triggered.connect(self._open_percent)
         pref_m.addAction(act_percent)
+        act_decimals = QAction("Decimali valori…", self)
+        act_decimals.triggered.connect(self._open_decimals)
+        pref_m.addAction(act_decimals)
 
         view_m = mb.addMenu("Visualizza")
         assert view_m is not None
@@ -1553,6 +1581,17 @@ class App(QMainWindow):
     def _open_percent(self):
         dlg = PercentDialog(self, self.db)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.diary_tab.nutri_frame._refresh()
+
+    def _open_decimals(self):
+        current = _display_decimals(self.db)
+        n, ok = QInputDialog.getInt(
+            self, "Decimali valori",
+            "Numero di decimali per i valori nutrizionali\n(riepilogo e ripartizione mNOVA):",
+            current, 0, 6, 1,
+        )
+        if ok:
+            self.db.set_setting("display_decimals", n)
             self.diary_tab.nutri_frame._refresh()
 
     # ── Import / Export ───────────────────────────────────────────────────

@@ -19,7 +19,8 @@ from delegates import _SelectAllDelegate
 from constants import (
     MEALS, _SKIP_BDA_COLS, _SPECIAL_CODES,
     _cutoff_options, _load_mnova_config, _load_percent_config,
-    _load_special_values,
+    _load_special_values, _compute_food_nutrients, _compute_energy_kcal,
+    _compute_mnova, _display_decimals,
 )
 
 
@@ -859,3 +860,83 @@ class MergeConflictsDialog(QDialog):
             if self.list.item(i).checkState() == Qt.CheckState.Checked
         ]
         self.accept()
+
+
+class FoodNutrientsDialog(QDialog):
+    """Valori nutrizionali calcolati per una singola voce del diario."""
+
+    def __init__(self, parent, db: Database, entry: dict):
+        super().__init__(parent)
+        self.db = db
+        self.entry = entry
+        self.setWindowTitle("Valori nutrizionali – " + (entry.get("food_name") or ""))
+        self.resize(560, 560)
+        self._build()
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        e = self.entry
+        bda = self.db.get_bda_food(e["bda_food_id"]) if e.get("bda_food_id") else None
+
+        if not bda:
+            lbl = QLabel(
+                f"<b>{e.get('food_name') or ''}</b><br>"
+                "Questa voce non è associata ad alcun alimento della BDA, "
+                "quindi non ci sono valori nutrizionali da mostrare."
+            )
+            lbl.setWordWrap(True)
+            layout.addWidget(lbl)
+            self._add_close(layout)
+            return
+
+        qty = e.get("quantity_g")
+        qty_txt = "100 (default)" if qty is None else f"{qty:g}"
+        dec = _display_decimals(self.db)
+        per100, perqty = _compute_food_nutrients(self.db, bda, qty)
+        energy = _compute_energy_kcal(perqty)
+        nova = e.get("nova")
+        mnova = _compute_mnova(nova, bda, _load_mnova_config(self.db))
+
+        head = QLabel(
+            f"<b>{e.get('food_name') or ''}</b><br>"
+            f"Alimento BDA: {bda.get('name') or e.get('bda_name') or '—'}<br>"
+            f"Quantità: {qty_txt} g · NOVA: {nova if nova is not None else '—'} · "
+            f"mNOVA: {mnova or '—'}<br>"
+            f"Energia (ric. macronutrienti): <b>{energy:.{dec}f} kcal</b>"
+        )
+        head.setWordWrap(True)
+        layout.addWidget(head)
+
+        table = QTableWidget(len(per100), 3)
+        table.setHorizontalHeaderLabels(["Nutriente", "per 100 g", f"per {qty_txt} g"])
+        hdr = table.horizontalHeader()
+        assert hdr is not None
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        vh = table.verticalHeader()
+        if vh is not None:
+            vh.setVisible(False)
+
+        def _num(v):
+            it = QTableWidgetItem("" if v is None else f"{v:.{dec}f}")
+            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            return it
+
+        for r, (col, v100) in enumerate(per100.items()):
+            table.setItem(r, 0, QTableWidgetItem(str(col)))
+            table.setItem(r, 1, _num(v100))
+            table.setItem(r, 2, _num(perqty.get(col)))
+        layout.addWidget(table)
+        self._add_close(layout)
+
+    def _add_close(self, layout):
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn = QPushButton("Chiudi")
+        btn.clicked.connect(self.accept)
+        btn.setDefault(True)
+        btn_row.addWidget(btn)
+        layout.addLayout(btn_row)

@@ -13,7 +13,7 @@ MEALS = ["Colazione", "Spuntino mattina", "Pranzo", "Spuntino pomeriggio", "Cena
 MEAL_ORDER = {m: i for i, m in enumerate(MEALS)}
 DAYS = [1, 2, 3, 4]
 APP_TITLE = "Analisi Diari Alimentari"
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 
 # Marcatore dei file di export/import (configurazione e progetto)
 EXPORT_FORMAT = "diario-alimentare"
@@ -68,6 +68,18 @@ def _parse_qty_grams(raw: str):
 def _qty_display(qty) -> str:
     """Formatta quantity_g per la visualizzazione: None → '—', altrimenti numero."""
     return "—" if qty is None else f"{qty:.4g}"
+
+
+DEFAULT_DECIMALS = 2
+
+
+def _display_decimals(db) -> int:
+    """Numero di decimali per i valori nutrizionali (preferenza, 0–6)."""
+    try:
+        n = int(db.get_setting("display_decimals", DEFAULT_DECIMALS))
+    except (TypeError, ValueError):
+        n = DEFAULT_DECIMALS
+    return max(0, min(6, n))
 
 
 def _open_excel(path):
@@ -452,3 +464,36 @@ def _compute_mnova_breakdown(db: "Database", user_code: str):
     media_g = {c: sum(grams[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
     media_k = {c: sum(kcal[d][c] for d in DAYS) / n for c in _MNOVA_COLS}
     return per_day, (media_g, media_k)
+
+
+def _compute_food_nutrients(db, bda_data: dict, qty):
+    """Valori nutrizionali di un singolo alimento.
+
+    Ritorna (per100, perqty): due dict {colonna: valore}.
+    - per100  – valore per 100 g (con i codici speciali -2/-3 sostituiti);
+    - perqty  – valore per la quantità data, applicando la formula del nutriente.
+    Coerente con _compute_user_totals (la somma dei perqty = totali del giorno).
+    """
+    try:
+        formulas = json.loads(db.get_setting("nutri_formulas") or "{}")
+    except Exception:
+        formulas = {}
+    _default = "val * qty / 100"
+    _safe = {"__builtins__": {}, "abs": abs, "max": max, "min": min, "round": round}
+    special = {float(k): v["value"] for k, v in _load_special_values(db).items()}
+    q = float(qty) if qty is not None else 100.0
+    per100, perqty = {}, {}
+    for col, val in bda_data.items():
+        if col in ("id", "name") or col in _SKIP_BDA_COLS or val is None:
+            continue
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            continue
+        fval = special.get(fval, fval)
+        per100[col] = fval
+        try:
+            perqty[col] = eval(formulas.get(col, _default), _safe, {"val": fval, "qty": q})
+        except (TypeError, ValueError, ZeroDivisionError, NameError, SyntaxError):
+            perqty[col] = None
+    return per100, perqty
