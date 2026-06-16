@@ -54,7 +54,7 @@ from dialogs import (
     BDASearchDialog, AddEditEntryDialog, BDAImportDialog,
     PreferencesDialog, FormulaDialog, SpecialValuesDialog,
     PercentDialog, BeverageCategoriesDialog, TextSizeDialog,
-    MergeConflictsDialog, FoodNutrientsDialog,
+    MergeConflictsDialog, FoodNutrientsDialog, GuideDialog,
 )
 
 
@@ -1438,6 +1438,9 @@ class App(QMainWindow):
 
         help_m = mb.addMenu("Aiuto")
         assert help_m is not None
+        act_guide = QAction("Guida / Manuale", self)
+        act_guide.triggered.connect(self._show_guide)
+        help_m.addAction(act_guide)
         act_about = QAction("Informazioni", self)
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)
@@ -1758,6 +1761,16 @@ class App(QMainWindow):
             msg += ("\n\nSe gli alimenti non risultano associati, usa "
                     "«Verifica / riassegna BDA».")
             QMessageBox.information(self, "Progetto unito", msg)
+
+    def _show_guide(self):
+        path = resource_path("MANUALE.md")
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            QMessageBox.warning(self, "Guida", "File della guida (MANUALE.md) non trovato.")
+            return
+        GuideDialog(self, text).exec()
 
     def _about(self):
         QMessageBox.information(

@@ -13,6 +13,7 @@ a = Analysis(
     datas=[
         ('database.py', '.'),
         ('icon.png', '.'),
+        ('MANUALE.md', '.'),
     ],
     hiddenimports=[
         'openpyxl',

@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox,
     QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem,
-    QTableWidget, QTableWidgetItem,
+    QTableWidget, QTableWidgetItem, QTextBrowser,
     QFrame, QMessageBox, QHeaderView, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt
@@ -933,6 +933,32 @@ class FoodNutrientsDialog(QDialog):
         self._add_close(layout)
 
     def _add_close(self, layout):
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn = QPushButton("Chiudi")
+        btn.clicked.connect(self.accept)
+        btn.setDefault(True)
+        btn_row.addWidget(btn)
+        layout.addLayout(btn_row)
+
+
+class GuideDialog(QDialog):
+    """Mostra la guida utente (Markdown) all'interno dell'app."""
+
+    def __init__(self, parent, markdown_text: str):
+        super().__init__(parent)
+        self.setWindowTitle("Guida – Analisi Diari Alimentari")
+        self.resize(820, 640)
+
+        layout = QVBoxLayout(self)
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        try:
+            browser.setMarkdown(markdown_text)
+        except Exception:
+            browser.setPlainText(markdown_text)
+        layout.addWidget(browser)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn = QPushButton("Chiudi")
