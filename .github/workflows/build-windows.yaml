@@ -43,16 +43,18 @@ jobs:
             "artifact_exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-      - name: Upload artifact
-        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: DiarioAlimentare-Windows
-          path: dist/DiarioAlimentare-Windows.zip
-          retention-days: 30
-
       - name: Publish to Release (on tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.zip-final.outputs.artifact_exists == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           files: dist/DiarioAlimentare-Windows.zip
+
+      - name: Upload artifact
+        # Non bloccante: se la quota artifact è piena, la Release resta comunque pubblicata.
+        continue-on-error: true
+        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-Windows
+          path: dist/DiarioAlimentare-Windows.zip
+          retention-days: 7

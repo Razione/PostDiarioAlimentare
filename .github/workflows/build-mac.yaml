@@ -125,6 +125,7 @@ jobs:
 
       - name: Upload QT plugin logs
         if: ${{ always() }}
+        continue-on-error: true   # non bloccare la pipeline se la quota artifact è piena
         uses: actions/upload-artifact@v4
         with:
           name: DiarioAlimentare-qt-plugin-logs
@@ -200,19 +201,21 @@ jobs:
             echo "artifact_exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload final artifact
-        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: DiarioAlimentare-macOS
-          path: dist/DiarioAlimentare-macOS.zip
-          retention-days: 30
-
       - name: Publish to Release (on tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.zip-final.outputs.artifact_exists == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           files: dist/DiarioAlimentare-macOS.zip
+
+      - name: Upload final artifact
+        # Non bloccante: se la quota artifact è piena, la Release resta comunque pubblicata.
+        continue-on-error: true
+        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiarioAlimentare-macOS
+          path: dist/DiarioAlimentare-macOS.zip
+          retention-days: 7
 
 
 
