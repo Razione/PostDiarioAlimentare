@@ -41,7 +41,7 @@ _DEFAULT_TABLE_PT = _DEFAULT_UI_PT      # font delle tabelle dati, regolabile a 
 _MIN_UI_PT, _MAX_UI_PT = 8, 28
 
 from constants import (
-    MEALS, MEAL_ORDER, DAYS, APP_TITLE, EXPORT_FORMAT, EXPORT_VERSION,
+    MEALS, MEAL_ORDER, DAYS, APP_TITLE, APP_VERSION, EXPORT_FORMAT, EXPORT_VERSION,
     ENERGY_LABEL, _MNOVA_COLS,
     _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
     _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
@@ -1723,7 +1723,7 @@ class App(QMainWindow):
     def _about(self):
         QMessageBox.information(
             self, "Informazioni",
-            f"{APP_TITLE}\n\nVersione 1.0\n\n"
+            f"{APP_TITLE}\n\nVersione {APP_VERSION}\n\n"
             "Analizza diari alimentari su 4 giorni,\n"
             "associa ogni voce a un alimento della BDA\n"
             "e calcola i valori nutrizionali.",

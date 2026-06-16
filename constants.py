@@ -13,6 +13,7 @@ MEALS = ["Colazione", "Spuntino mattina", "Pranzo", "Spuntino pomeriggio", "Cena
 MEAL_ORDER = {m: i for i, m in enumerate(MEALS)}
 DAYS = [1, 2, 3, 4]
 APP_TITLE = "Analisi Diari Alimentari"
+APP_VERSION = "1.2.5"
 
 # Marcatore dei file di export/import (configurazione e progetto)
 EXPORT_FORMAT = "diario-alimentare"
