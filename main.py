@@ -1228,8 +1228,8 @@ class DiaryTab(QWidget):
             QMessageBox.critical(self, "Errore", f"Impossibile salvare il file:\n{exc}")
 
     def _import_content_export(self):
-        """Importa il file Content_Export: 6 fogli concatenati orizzontalmente,
-        una riga per utente, 4 giorni di diario codificati in larghezza."""
+        """Importa il file Content_Export (6 fogli concatenati, una riga per
+        utente, 4 giorni per riga) e chiede se sostituire o unire gli utenti."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Seleziona file Content Export", "",
             "Excel (*.xlsx *.xls);;Tutti i file (*.*)",
@@ -1249,19 +1249,20 @@ class DiaryTab(QWidget):
             return
 
         # I dati iniziano alla riga 4 (0-3 = metadata + header)
-        data = df_full.iloc[4:].reset_index(drop=True)
+        data_rows = df_full.iloc[4:].reset_index(drop=True)
         ncols = df_full.shape[1]
 
-        imported, skipped = 0, 0
-        total = len(data)
+        notes_map = {u["code"]: u.get("notes", "") for u in self.db.get_users()}
+        users_order, seen = [], set()
+        entries, day_meta = [], []
+        total = len(data_rows)
 
-        progress = QProgressDialog("Importazione Content Export in corso…", None, 0, total, self)
+        progress = QProgressDialog("Lettura Content Export in corso…", None, 0, total, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
 
-        for row_idx, (_, row) in enumerate(data.iterrows()):
-            raw_user = str(row.iloc[0])
-            user_code = raw_user.strip().strip("\r\n")
+        for row_idx, (_, row) in enumerate(data_rows.iterrows()):
+            user_code = str(row.iloc[0]).strip()
             if not user_code or user_code.lower() == "nan":
                 continue
 
@@ -1273,21 +1274,21 @@ class DiaryTab(QWidget):
                     continue
 
                 day_num = day_idx + 1
-
                 if isinstance(raw_date, pd.Timestamp):
                     date_str = raw_date.strftime("%d/%m/%Y")
                 else:
                     date_str = str(raw_date).strip()
-                self.db.add_user(user_code)
-                self.db.set_day_meta(user_code, day_num, date_str)
 
-                self.db.delete_entries_for_day(user_code, day_num)
+                if user_code not in seen:
+                    seen.add(user_code)
+                    users_order.append(user_code)
+                day_meta.append({"user_code": user_code, "day": day_num,
+                                 "date_label": date_str})
 
                 for meal_name, food_offset, max_items in _CONTENT_EXPORT_MEALS:
                     ora_col = day_col + food_offset - 2
                     luogo_col = day_col + food_offset - 1
-                    meal_ora = ""
-                    meal_luogo = ""
+                    meal_ora = meal_luogo = ""
                     if 0 <= ora_col < ncols:
                         v = str(row.iloc[ora_col]).strip()
                         if v and v.lower() != "nan":
@@ -1320,34 +1321,79 @@ class DiaryTab(QWidget):
                             continue
                         last_food_name = food_name
 
-                        qty_g = _parse_qty_grams(qty_raw)
-                        notes = desc
-
-                        try:
-                            self.db.add_entry(user_code, day_num, meal_name,
-                                              food_name, qty_g, notes,
-                                              ora=meal_ora, luogo=meal_luogo,
-                                              qty_raw=qty_raw)
-                            imported += 1
-                        except Exception:
-                            skipped += 1
+                        entries.append({
+                            "user_code": user_code, "day": day_num, "meal": meal_name,
+                            "food_name": food_name,
+                            "quantity_g": _parse_qty_grams(qty_raw),
+                            "notes": desc, "ora": meal_ora, "luogo": meal_luogo,
+                            "qty_raw": qty_raw,
+                        })
 
             if row_idx % 10 == 0:
                 progress.setValue(row_idx)
                 QApplication.processEvents()
-
         progress.setValue(total)
 
-        msg = f"Importate {imported} voci da Content Export."
-        if skipped:
-            msg += f"\n{skipped} voci ignorate per errori."
-        QMessageBox.information(self, "Importazione completata", msg)
+        if not users_order:
+            QMessageBox.information(self, "Content Export",
+                                   "Nessun utente valido trovato nel file.")
+            return
+
+        data = {
+            "users": [{"code": c, "notes": notes_map.get(c, "")} for c in users_order],
+            "diary_entries": entries,
+            "diary_day_meta": day_meta,
+        }
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Importa Content Export")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"Il file contiene {len(users_order)} utenti e "
+                    f"{len(entries)} voci di diario.")
+        box.setInformativeText(
+            "<b>Sostituisci</b>: rimpiazza il diario degli utenti presenti nel file "
+            "(gli altri utenti restano invariati).<br>"
+            "<b>Unisci</b>: aggiunge i nuovi; quelli già presenti senza associazioni "
+            "vengono aggiornati, per quelli già associati chiede conferma."
+        )
+        btn_replace = box.addButton("Sostituisci", QMessageBox.ButtonRole.DestructiveRole)
+        btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is btn_replace:
+            overwrite = list(users_order)   # sostituisci tutti gli utenti del file
+        elif clicked is btn_merge:
+            analysis = self.db.merge_analysis(data)
+            overwrite = []
+            if analysis["conflict"]:
+                cdlg = MergeConflictsDialog(
+                    self, analysis["conflict"],
+                    n_new=len(analysis["new"]),
+                    n_auto=len(analysis["auto_update"]),
+                )
+                if cdlg.exec() != QDialog.DialogCode.Accepted:
+                    return
+                overwrite = cdlg.selected
+        else:
+            return
+
+        rep = self.db.apply_merge_project(data, overwrite)
         self.refresh_users()
         if self.on_change:
             self.on_change()
         if self.current_user:
             self._on_user_change(self.user_list.currentRow())
 
+        applied = set(rep["added"]) | set(rep["updated"])
+        n_voci = sum(1 for e in entries if e["user_code"] in applied)
+        n_add, n_upd, n_kept = len(rep["added"]), len(rep["updated"]), len(rep["kept"])
+        msg = ("Aggiunti: %d\nAggiornati: %d\nMantenuti invariati: %d\n\n"
+               "Voci importate: %d" % (n_add, n_upd, n_kept, n_voci))
+        if rep["kept"]:
+            msg += "\n\nMantenuti (non sovrascritti):\n  " + "\n  ".join(rep["kept"])
+        QMessageBox.information(self, "Content Export importato", msg)
 
 # ── Main window ───────────────────────────────────────────────────────────────
 
