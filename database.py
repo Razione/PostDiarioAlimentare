@@ -431,6 +431,19 @@ class Database:
             ).fetchone()
         return row["tot"] or 0, row["assoc"] or 0
 
+    def count_entries_all(self) -> dict:
+        """{user_code: (tot, assoc)} per tutti gli utenti, in un'unica query.
+        'assoc' conta solo le associazioni risolvibili (alimento BDA esistente)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT de.user_code AS code, COUNT(*) AS tot, "
+                "SUM(bf.id IS NOT NULL) AS assoc "
+                "FROM diary_entries de "
+                "LEFT JOIN bda_foods bf ON de.bda_food_id = bf.id "
+                "GROUP BY de.user_code"
+            ).fetchall()
+        return {r["code"]: (r["tot"] or 0, r["assoc"] or 0) for r in rows}
+
     # ── Diary day meta ────────────────────────────────────────────────────────
 
     def set_day_meta(self, user_code, day, date_label):

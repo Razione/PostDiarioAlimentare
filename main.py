@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QAction, QIcon, QKeySequence
+from PyQt6.QtGui import QColor, QBrush, QFont, QAction, QIcon, QKeySequence
 
 from database import Database
 
@@ -368,12 +368,17 @@ class UsersTab(QWidget):
 
 
 class DayFrame(QWidget):
-    def __init__(self, db: Database, day: int):
+    def __init__(self, db: Database, day: int, on_change=None):
         super().__init__()
         self.db = db
         self.day = day
+        self.on_change = on_change
         self.user_code = None
         self._build()
+
+    def _notify(self):
+        if self.on_change:
+            self.on_change()
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -508,6 +513,7 @@ class DayFrame(QWidget):
         r = dlg.value
         self.db.add_entry(self.user_code, r["day"], r["meal"], r["food_name"], r["quantity_g"], r["notes"])
         self._refresh()
+        self._notify()
 
     def _edit(self):
         eid = self._selected_id()
@@ -535,6 +541,7 @@ class DayFrame(QWidget):
             return
         self.db.delete_entry(eid)
         self._refresh()
+        self._notify()
 
     def _associate_bda(self):
         eid = self._selected_id()
@@ -549,6 +556,7 @@ class DayFrame(QWidget):
             bda_id, _ = dlg.value
             self.db.associate_bda(eid, bda_id)
             self._refresh()
+            self._notify()
 
     def _remove_bda(self):
         eid = self._selected_id()
@@ -556,6 +564,7 @@ class DayFrame(QWidget):
             return
         self.db.associate_bda(eid, None)
         self._refresh()
+        self._notify()
 
     def _show_food_nutrients(self):
         eid = self._selected_id()
@@ -831,6 +840,22 @@ class NutriSummaryFrame(QWidget):
         return _compute_user_totals(self.db, self.user_code)
 
 
+# Colore del testo per lo stato di associazione di un utente nella lista.
+# (Il giallo puro come testo è illeggibile: per "in corso" si usa un ambra scuro.)
+_ASSOC_FG_PARTIAL = QColor("#b8860b")  # in corso (ambra/giallo scuro)
+_ASSOC_FG_FULL = QColor("#2e7d32")     # tutte associate (verde)
+
+
+def _assoc_fg(tot, assoc):
+    """Pennello per il colore del testo in base a voci totali/associate.
+    Ritorna un QBrush nullo (colore di default) se non associato."""
+    if tot == 0 or assoc == 0:
+        return QBrush()                # default
+    if assoc < tot:
+        return QBrush(_ASSOC_FG_PARTIAL)
+    return QBrush(_ASSOC_FG_FULL)
+
+
 class DiaryTab(QWidget):
     def __init__(self, db: Database, on_change=None):
         super().__init__()
@@ -861,6 +886,14 @@ class DiaryTab(QWidget):
         self.user_list.currentRowChanged.connect(self._on_user_change)
         self.user_list.itemChanged.connect(self._on_check_changed)
         left_layout.addWidget(self.user_list)
+
+        legend = QLabel(
+            '<span style="color:#2e7d32">■ associato</span> &nbsp; '
+            '<span style="color:#b8860b">■ in corso</span> &nbsp; '
+            '<span style="color:gray">■ non assoc.</span>'
+        )
+        legend.setStyleSheet("font-size: 11px;")
+        left_layout.addWidget(legend)
 
         btn_add = QPushButton("+ Aggiungi")
         btn_add.clicked.connect(self._add_user)
@@ -921,7 +954,7 @@ class DiaryTab(QWidget):
         self.day_nb = QTabWidget()
         self.day_frames = []
         for d in DAYS:
-            frm = DayFrame(self.db, d)
+            frm = DayFrame(self.db, d, on_change=self._update_user_color)
             self.day_nb.addTab(frm, f"  Giorno {d}  ")
             self.day_frames.append(frm)
 
@@ -963,6 +996,7 @@ class DiaryTab(QWidget):
         self._users = self.db.get_users()
         self.users_group.setTitle(f"Utenti ({len(self._users)})")
         current_code = self.current_user
+        status = self.db.count_entries_all()
         self.user_list.blockSignals(True)
         self.user_list.clear()
         for u in self._users:
@@ -970,6 +1004,9 @@ class DiaryTab(QWidget):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             state = Qt.CheckState.Checked if u["code"] in self._checked_users else Qt.CheckState.Unchecked
             item.setCheckState(state)
+            tot, assoc = status.get(u["code"], (0, 0))
+            item.setForeground(_assoc_fg(tot, assoc))
+            item.setToolTip(f"Voci associate: {assoc}/{tot}")
             self.user_list.addItem(item)
         if current_code:
             for i, u in enumerate(self._users):
@@ -980,6 +1017,17 @@ class DiaryTab(QWidget):
                 self.current_user = None
         self.user_list.blockSignals(False)
         self._filter_users(self.search_user.text())
+
+    def _update_user_color(self):
+        """Ricolora l'utente corrente in base allo stato di associazione."""
+        if not self.current_user:
+            return
+        item = self.user_list.item(self.user_list.currentRow())
+        if item is None or item.text() != self.current_user:
+            return
+        tot, assoc = self.db.count_entries(self.current_user)
+        item.setForeground(_assoc_fg(tot, assoc))
+        item.setToolTip(f"Voci associate: {assoc}/{tot}")
 
     def _on_user_change(self, row):
         if row < 0 or row >= len(self._users):
