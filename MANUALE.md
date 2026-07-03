@@ -1,6 +1,6 @@
 # Analisi Diari Alimentari — Guida utente
 
-Versione applicazione: **1.2.7**
+Versione applicazione: **1.2.8**
 
 Applicazione desktop (Windows e macOS) per analizzare diari alimentari su **4 giorni**:
 si associa ogni alimento del diario a una voce della **Banca Dati di composizione
@@ -82,9 +82,18 @@ Gestione anagrafica dei soggetti e relative note.
 ## 6. Scheda Diari
 
 ### Barra utenti (sinistra)
-- **Cerca utente**, elenco con **caselle di selezione** (servono per l'export multiplo).
+- **Cerca utente** e **filtro per stato** (Tutti / Da fare / In corso / Completati): i due
+  filtri si combinano.
+- L'elenco ha **caselle di selezione** (servono per l'export multiplo).
+- Il **colore del testo** indica lo stato di associazione dell'utente:
+  **verde** = tutte le voci associate · **ambra** = associazione in corso ·
+  **default** = nessuna associazione (vedi legenda sotto l'elenco; il tooltip mostra
+  «associate/totali»).
 - **+ Aggiungi / Elimina** utente.
 - **Importa Content Export**: importa il file Excel «Content Export» (4 giorni per utente).
+  Chiede se **Sostituisci** (rimpiazza il diario degli utenti presenti nel file) o
+  **Unisci** (aggiunge i nuovi; aggiorna quelli senza associazioni; per quelli già
+  associati chiede in un elenco quali sovrascrivere).
 - **Seleziona tutti / Deseleziona tutti** e **Esporta selezionati** (export Excel del riepilogo).
 - Pulsante **◀ Nascondi utenti** (in alto a destra): comprime la barra per avere più spazio.
 

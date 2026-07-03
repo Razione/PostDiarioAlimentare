@@ -846,14 +846,21 @@ _ASSOC_FG_PARTIAL = QColor("#b8860b")  # in corso (ambra/giallo scuro)
 _ASSOC_FG_FULL = QColor("#2e7d32")     # tutte associate (verde)
 
 
-def _assoc_fg(tot, assoc):
-    """Pennello per il colore del testo in base a voci totali/associate.
-    Ritorna un QBrush nullo (colore di default) se non associato."""
+def _status_class(tot, assoc):
+    """Classe di stato: 'none' (da fare), 'partial' (in corso), 'full' (fatto)."""
     if tot == 0 or assoc == 0:
-        return QBrush()                # default
-    if assoc < tot:
+        return "none"
+    return "partial" if assoc < tot else "full"
+
+
+def _assoc_fg(tot, assoc):
+    """Pennello per il colore del testo in base allo stato (default se 'none')."""
+    cls = _status_class(tot, assoc)
+    if cls == "full":
+        return QBrush(_ASSOC_FG_FULL)
+    if cls == "partial":
         return QBrush(_ASSOC_FG_PARTIAL)
-    return QBrush(_ASSOC_FG_FULL)
+    return QBrush()
 
 
 class DiaryTab(QWidget):
@@ -863,6 +870,7 @@ class DiaryTab(QWidget):
         self.on_change = on_change
         self.current_user = None
         self._users = []
+        self._status: dict = {}          # code → (tot, assoc)
         self._checked_users: set = set()
         self._build()
 
@@ -881,6 +889,14 @@ class DiaryTab(QWidget):
         self.search_user.setPlaceholderText("Cerca utente…")
         self.search_user.textChanged.connect(self._filter_users)
         left_layout.addWidget(self.search_user)
+
+        self.status_filter = QComboBox()
+        self.status_filter.addItem("Tutti gli stati", None)
+        self.status_filter.addItem("Da fare", "none")
+        self.status_filter.addItem("In corso", "partial")
+        self.status_filter.addItem("Completati", "full")
+        self.status_filter.currentIndexChanged.connect(self._filter_users)
+        left_layout.addWidget(self.status_filter)
 
         self.user_list = QListWidget()
         self.user_list.currentRowChanged.connect(self._on_user_change)
@@ -985,18 +1001,24 @@ class DiaryTab(QWidget):
                 self.splitter.setSizes(self._saved_sizes)
             self.btn_toggle_users.setText("◀ Nascondi utenti")
 
-    def _filter_users(self, text=""):
-        q = text.strip().lower()
+    def _filter_users(self, *_):
+        q = self.search_user.text().strip().lower()
+        sel = self.status_filter.currentData()   # None | 'none' | 'partial' | 'full'
         for i, u in enumerate(self._users):
             item = self.user_list.item(i)
-            if item:
-                item.setHidden(bool(q) and q not in u["code"].lower())
+            if not item:
+                continue
+            code = u["code"]
+            hidden = bool(q) and q not in code.lower()
+            if sel and _status_class(*self._status.get(code, (0, 0))) != sel:
+                hidden = True
+            item.setHidden(hidden)
 
     def refresh_users(self):
         self._users = self.db.get_users()
         self.users_group.setTitle(f"Utenti ({len(self._users)})")
         current_code = self.current_user
-        status = self.db.count_entries_all()
+        self._status = self.db.count_entries_all()
         self.user_list.blockSignals(True)
         self.user_list.clear()
         for u in self._users:
@@ -1004,7 +1026,7 @@ class DiaryTab(QWidget):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             state = Qt.CheckState.Checked if u["code"] in self._checked_users else Qt.CheckState.Unchecked
             item.setCheckState(state)
-            tot, assoc = status.get(u["code"], (0, 0))
+            tot, assoc = self._status.get(u["code"], (0, 0))
             item.setForeground(_assoc_fg(tot, assoc))
             item.setToolTip(f"Voci associate: {assoc}/{tot}")
             self.user_list.addItem(item)
@@ -1026,6 +1048,7 @@ class DiaryTab(QWidget):
         if item is None or item.text() != self.current_user:
             return
         tot, assoc = self.db.count_entries(self.current_user)
+        self._status[self.current_user] = (tot, assoc)
         item.setForeground(_assoc_fg(tot, assoc))
         item.setToolTip(f"Voci associate: {assoc}/{tot}")
 
