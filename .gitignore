@@ -24,3 +24,6 @@ food_diary.db
 # macOS
 .DS_Store
 .claude/settings.local.json
+
+# Export per la webapp (bda.json = riferimento, seed.json = dati personali)
+web-export/
