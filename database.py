@@ -520,6 +520,24 @@ class Database:
                 data["bda_categories"] = self._dump_table(conn, "bda_categories")
         return data
 
+    def export_users(self, codes) -> dict:
+        """Esporta solo gli utenti indicati (+ diari ed etichette giorni).
+
+        Progetto 'leggero' per il lavoro condiviso: niente BDA né preferenze.
+        """
+        codes = list(codes)
+        if not codes:
+            return {"users": [], "diary_entries": [], "diary_day_meta": []}
+        ph = ",".join("?" * len(codes))
+        with self._conn() as conn:
+            users = [dict(r) for r in conn.execute(
+                f"SELECT * FROM users WHERE code IN ({ph})", codes)]
+            entries = [dict(r) for r in conn.execute(
+                f"SELECT * FROM diary_entries WHERE user_code IN ({ph})", codes)]
+            meta = [dict(r) for r in conn.execute(
+                f"SELECT * FROM diary_day_meta WHERE user_code IN ({ph})", codes)]
+        return {"users": users, "diary_entries": entries, "diary_day_meta": meta}
+
     def import_settings(self, settings: dict):
         """Applica le preferenze del file (le chiavi presenti sovrascrivono)."""
         with self._conn() as conn:

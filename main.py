@@ -1505,6 +1505,9 @@ class App(QMainWindow):
         act_exp_prj = QAction("Esporta progetto…", self)
         act_exp_prj.triggered.connect(self._export_project)
         file_m.addAction(act_exp_prj)
+        act_exp_sel = QAction("Esporta progetto (utenti selezionati)…", self)
+        act_exp_sel.triggered.connect(self._export_selected_project)
+        file_m.addAction(act_exp_sel)
         act_imp_prj = QAction("Importa progetto…", self)
         act_imp_prj.triggered.connect(self._import_project)
         file_m.addAction(act_imp_prj)
@@ -1812,6 +1815,31 @@ class App(QMainWindow):
                 f"Esportati {len(data.get('users', [])):,} utenti, "
                 f"{len(data.get('diary_entries', [])):,} voci di diario e "
                 f"{len(data.get('bda_foods', [])):,} alimenti BDA in:\n{path}")
+
+    def _export_selected_project(self):
+        codes = sorted(self.diary_tab._checked_users)
+        if not codes:
+            QMessageBox.information(
+                self, "Esporta progetto (selezionati)",
+                "Nessun utente selezionato.\nSpunta gli utenti da esportare "
+                "nell'elenco della scheda Diari.")
+            return
+        default = f"progetto_{len(codes)}_utenti.json.gz"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Esporta progetto (utenti selezionati)", default,
+            "JSON compresso (*.json.gz);;JSON (*.json)")
+        if not path:
+            return
+        data = self.db.export_users(codes)
+        payload = {"format": EXPORT_FORMAT, "kind": "project",
+                   "version": EXPORT_VERSION, **data}
+        if self._write_json(path, payload):
+            QMessageBox.information(
+                self, "Progetto esportato",
+                f"Esportati {len(data['users'])} utenti selezionati e "
+                f"{len(data['diary_entries'])} voci di diario in:\n{path}\n\n"
+                "File 'leggero' (senza BDA né configurazione), pensato per l'unione "
+                "sull'altro computer con «Importa progetto → Unisci».")
 
     def _import_project(self):
         path, _ = QFileDialog.getOpenFileName(

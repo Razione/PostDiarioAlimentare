@@ -1,6 +1,6 @@
 # Analisi Diari Alimentari — Guida utente
 
-Versione applicazione: **1.2.8**
+Versione applicazione: **1.2.9**
 
 Applicazione desktop (Windows e macOS) per analizzare diari alimentari su **4 giorni**:
 si associa ogni alimento del diario a una voce della **Banca Dati di composizione
@@ -181,6 +181,20 @@ in un unico file `.json.gz` (compresso). All'**import** scegli:
 
 > Suggerimento: dopo un'unione, se gli alimenti non risultano associati usa
 > **Verifica / riassegna BDA**.
+
+**Esporta progetto (utenti selezionati)**: esporta un file `.json.gz` **leggero** con i
+soli utenti **spuntati** nell'elenco (senza BDA né configurazione). Ideale per il lavoro
+condiviso: si mandano «solo i propri» utenti e l'altro li integra con **Importa progetto → Unisci**.
+
+### Lavoro condiviso a due
+Per dividere il lavoro su due computer senza confusione:
+1. **Partite uguali**: uno carica la BDA e imposta le preferenze, poi esporta la
+   **configurazione** e la manda all'altro; entrambi caricano la **stessa BDA** e usano la
+   **stessa versione** dell'app.
+2. **Dividete i soggetti** in due gruppi disgiunti: lo *stesso utente non si tocca su entrambi i PC*.
+3. Ognuno lavora sui propri utenti (lo **stato a colori** e il **filtro** aiutano a seguire i progressi).
+4. Alla fine, ognuno fa **Esporta progetto (utenti selezionati)** dei propri e lo invia; l'altro
+   fa **Importa progetto → Unisci**: i nuovi utenti vengono aggiunti senza toccare il lavoro esistente.
 
 ### Export Excel del riepilogo (Esporta selezionati)
 Genera un file con due fogli:
