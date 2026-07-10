@@ -2,6 +2,9 @@
 import {
   collection,
   doc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
   getDocs,
   onSnapshot,
   query,
@@ -66,6 +69,29 @@ export function listenEntries(
   return onSnapshot(entriesCol(code), (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DiaryEntry, "id">) })));
   });
+}
+
+/** Ascolta le preferenze del team (cutoff, formule, ecc.). */
+export function listenConfig(cb: (config: Record<string, unknown>) => void): () => void {
+  const ref = doc(requireDb(), "teams", TEAM_ID, "settings", "config");
+  return onSnapshot(ref, (s) => cb(s.exists() ? (s.data() as Record<string, unknown>) : {}));
+}
+
+export async function addEntry(code: string, entry: Omit<DiaryEntry, "id">): Promise<void> {
+  await addDoc(entriesCol(code), entry);
+}
+export async function updateEntry(
+  code: string,
+  id: string,
+  patch: Partial<DiaryEntry>,
+): Promise<void> {
+  await updateDoc(doc(entriesCol(code), id), patch);
+}
+export async function deleteEntry(code: string, id: string): Promise<void> {
+  await deleteDoc(doc(entriesCol(code), id));
+}
+export async function addSubject(code: string, notes = ""): Promise<void> {
+  await setDoc(doc(subjectsCol(), code), { notes });
 }
 
 async function commitBatches(ops: Array<(b: ReturnType<typeof writeBatch>) => void>) {

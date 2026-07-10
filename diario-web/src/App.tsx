@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "./features/auth/useAuth";
 import { BdaTab } from "./features/bda/BdaTab";
 import { UtentiTab } from "./features/subjects/UtentiTab";
+import { DiariTab } from "./features/diary/DiariTab";
 import { TEAM_ID, firebaseConfigured, missingEnv } from "./lib/firebase";
 
 type Tab = "diari" | "bda" | "utenti";
@@ -51,7 +52,7 @@ export default function App() {
       </header>
 
       <main className="content">
-        {tab === "diari" && <Placeholder title="Diari" phase="Fasi 2–4" />}
+        {tab === "diari" && <DiariTab />}
         {tab === "bda" && <BdaTab />}
         {tab === "utenti" && <UtentiTab />}
       </main>
@@ -143,15 +144,3 @@ function ConfigNeeded() {
   );
 }
 
-function Placeholder({ title, phase }: { title: string; phase: string }) {
-  return (
-    <div className="card">
-      <h2>{title}</h2>
-      <p className="muted">
-        Sezione in costruzione ({phase}). Lo scaffold (Auth + Firestore +
-        motore nutrizionale) è pronto: qui arriveranno griglia, ricerca e
-        riepilogo.
-      </p>
-    </div>
-  );
-}

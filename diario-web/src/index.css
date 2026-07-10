@@ -79,3 +79,27 @@ table.grid { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.grid th, table.grid td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
 table.grid thead th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
 table.grid tbody tr:hover { background: #f8fafc; }
+tr.clickable { cursor: pointer; }
+input.cell { width: 70px; font: inherit; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+table.grid select, .addrow select, .addrow input { font: inherit; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+
+.diari { display: flex; gap: 12px; align-items: flex-start; }
+.subjects { width: 240px; flex-shrink: 0; }
+.subjects input { width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+.subjlist { max-height: 65vh; overflow: auto; border: 1px solid #eef0f2; border-radius: 8px; }
+.subj { padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #f1f3f5; font-size: 14px; }
+.subj:hover { background: #f3f4f6; }
+.subj.active { background: #e5f1fb; color: #0078d4; font-weight: 600; }
+.diarygrid { flex: 1; min-width: 0; }
+.addrow { gap: 6px; margin-bottom: 4px; }
+.addrow input { flex: 1; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  display: grid; place-items: center; z-index: 50;
+}
+.modal {
+  background: #fff; border-radius: 12px; padding: 16px; width: min(680px, 92vw);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+.modal input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
