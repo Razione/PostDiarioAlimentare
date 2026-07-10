@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "./features/auth/useAuth";
-import { TEAM_ID } from "./lib/firebase";
+import { TEAM_ID, firebaseConfigured, missingEnv } from "./lib/firebase";
 
 type Tab = "diari" | "bda" | "utenti";
 
@@ -13,6 +13,10 @@ const TABS: Array<{ id: Tab; label: string }> = [
 export default function App() {
   const { user, loading, login, logout } = useAuth();
   const [tab, setTab] = useState<Tab>("diari");
+
+  if (!firebaseConfigured) {
+    return <ConfigNeeded />;
+  }
 
   if (loading) {
     return <div className="center muted">Caricamento…</div>;
@@ -59,6 +63,33 @@ export default function App() {
         {tab === "bda" && <Placeholder title="BDA" phase="Fase 1" />}
         {tab === "utenti" && <Placeholder title="Utenti" phase="Fase 2" />}
       </main>
+    </div>
+  );
+}
+
+function ConfigNeeded() {
+  return (
+    <div className="center">
+      <div className="card">
+        <h1>Configurazione Firebase mancante</h1>
+        <p className="muted">
+          La app non trova la configurazione del progetto Firebase, per questo la
+          pagina restava bianca. Crea il file <code>.env.local</code> nella
+          cartella <code>diario-web/</code> (copia da <code>.env.example</code>) e
+          incolla i valori dal tuo progetto Firebase → Impostazioni progetto → «I
+          tuoi apps» (Web) → Config SDK.
+        </p>
+        {missingEnv.length > 0 && (
+          <p>
+            Variabili mancanti:{" "}
+            <code>{missingEnv.join(", ")}</code>
+          </p>
+        )}
+        <p className="muted small">
+          Dopo aver salvato <code>.env.local</code>, <b>riavvia</b>{" "}
+          <code>npm run dev</code> (Vite legge le variabili solo all'avvio).
+        </p>
+      </div>
     </div>
   );
 }

@@ -12,14 +12,22 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
     });
   }, []);
 
-  const login = () => signInWithPopup(auth, googleProvider);
-  const logout = () => signOut(auth);
+  const login = async () => {
+    if (auth && googleProvider) await signInWithPopup(auth, googleProvider);
+  };
+  const logout = async () => {
+    if (auth) await signOut(auth);
+  };
 
   return { user, loading, login, logout };
 }
