@@ -18,6 +18,11 @@ const firebaseConfig = {
 
 export const TEAM_ID = import.meta.env.VITE_TEAM_ID || "default";
 
+// Login per nome utente: lo username viene mappato a "<username>@<dominio>".
+// Gli account si creano in console Firebase con queste email "tecniche".
+export const USERNAME_DOMAIN =
+  import.meta.env.VITE_USERNAME_DOMAIN || "diario.local";
+
 /** True solo se la config essenziale è presente (evita il crash a pagina bianca). */
 export const firebaseConfigured = Boolean(
   firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId,

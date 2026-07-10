@@ -43,7 +43,7 @@ export default function App() {
         </nav>
         <div className="spacer" />
         <span className="muted small">
-          team: {TEAM_ID} · {user.email}
+          team: {TEAM_ID} · {user.email?.split("@")[0] ?? "utente"}
         </span>
         <button onClick={() => void logout()}>Esci</button>
       </header>
@@ -60,9 +60,9 @@ export default function App() {
 function LoginForm({
   onLogin,
 }: {
-  onLogin: (email: string, password: string) => Promise<void>;
+  onLogin: (username: string, password: string) => Promise<void>;
 }) {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,9 +72,9 @@ function LoginForm({
     setError("");
     setBusy(true);
     try {
-      await onLogin(email, password);
+      await onLogin(username, password);
     } catch {
-      setError("Accesso fallito: email o password non validi.");
+      setError("Accesso fallito: nome utente o password non validi.");
     } finally {
       setBusy(false);
     }
@@ -86,12 +86,12 @@ function LoginForm({
         <h1>Analisi Diari Alimentari</h1>
         <p className="muted">Accedi per lavorare sui diari condivisi.</p>
         <label>
-          Email
+          Nome utente
           <input
-            type="email"
+            type="text"
             autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             required
           />
         </label>

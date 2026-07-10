@@ -5,7 +5,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { auth } from "../../lib/firebase";
+import { auth, USERNAME_DOMAIN } from "../../lib/firebase";
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -22,9 +22,12 @@ export function useAuth() {
     });
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (username: string, password: string) => {
     if (!auth) throw new Error("Firebase non configurato");
-    await signInWithEmailAndPassword(auth, email.trim(), password);
+    const id = username.trim();
+    // Lo username diventa "<username>@<dominio>"; se già email, si usa così com'è.
+    const email = id.includes("@") ? id : `${id}@${USERNAME_DOMAIN}`;
+    await signInWithEmailAndPassword(auth, email, password);
   };
   const logout = async () => {
     if (auth) await signOut(auth);
