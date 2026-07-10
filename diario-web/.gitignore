@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+*.local
+
+# Chiave service account (mai committare)
+serviceAccount.json
