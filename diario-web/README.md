@@ -36,11 +36,29 @@ npm run dev
    ```
    Crea il doc `teams/default` con `members: [<uid1>, <uid2>]`.
 
+### Storage (per la BDA)
+1. Console Firebase → **Storage** → abilita (Get started).
+   *Nota: alcuni progetti recenti richiedono il piano Blaze per usare Storage —
+   l'uso resta nel free tier, ma serve un metodo di pagamento. Se non vuoi, si può
+   tenere la BDA come file statico: chiedi e adattiamo.*
+2. **Storage → Rules** (bozza semplice, per soli utenti autenticati):
+   ```
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /teams/{t}/{allPaths=**} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+   ```
+
 ## Dati
-- **BDA**: asset statico. Genera `src/data/bda.json` con
-  `python ../tools/export_web_data.py` (copia `web-export/bda.json`).
-- **Seme iniziale**: `python ../tools/export_web_data.py` → `web-export/seed.json`,
-  poi `node ../tools/firestore_import.mjs web-export/seed.json`.
+- **BDA**: caricala dall'app (scheda **BDA → «Carica BDA da Excel»**): viene letta
+  in-browser e salvata su Storage in `teams/<team>/bda.json`, condivisa col team.
+  Aggiornarla = ricaricare un nuovo Excel (nessun redeploy).
+- **Seme iniziale** (soggetti/diari): `python ../tools/export_web_data.py` →
+  `web-export/seed.json`, poi `node ../tools/firestore_import.mjs web-export/seed.json`.
 
 ## Deploy (Netlify)
 Collega il repo, base directory `diario-web`, build `npm run build`, publish `dist`

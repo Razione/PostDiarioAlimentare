@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "./features/auth/useAuth";
+import { BdaTab } from "./features/bda/BdaTab";
 import { TEAM_ID, firebaseConfigured, missingEnv } from "./lib/firebase";
 
 type Tab = "diari" | "bda" | "utenti";
@@ -50,7 +51,7 @@ export default function App() {
 
       <main className="content">
         {tab === "diari" && <Placeholder title="Diari" phase="Fasi 2–4" />}
-        {tab === "bda" && <Placeholder title="BDA" phase="Fase 1" />}
+        {tab === "bda" && <BdaTab />}
         {tab === "utenti" && <Placeholder title="Utenti" phase="Fase 2" />}
       </main>
     </div>

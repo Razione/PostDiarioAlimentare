@@ -65,3 +65,17 @@ button.primary:hover { background: #006cbe; }
 }
 .login .primary { margin-top: 4px; }
 .error { color: #b91c1c; font-size: 14px; margin: 0; }
+
+.card { max-width: none; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row.between { justify-content: space-between; }
+.row.search { margin: 8px 0; }
+.row.search input { flex: 1; }
+.row.search input, .row.search select {
+  font: inherit; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px;
+}
+.tablewrap { max-height: 60vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; }
+table.grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.grid th, table.grid td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
+table.grid thead th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
+table.grid tbody tr:hover { background: #f8fafc; }

@@ -6,6 +6,7 @@ import {
   persistentMultipleTabManager,
   type Firestore,
 } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -40,6 +41,7 @@ export const missingEnv = Object.entries({
 
 let _auth: Auth | null = null;
 let _db: Firestore | null = null;
+let _storage: FirebaseStorage | null = null;
 
 if (firebaseConfigured) {
   const app: FirebaseApp = initializeApp(firebaseConfig);
@@ -47,7 +49,9 @@ if (firebaseConfigured) {
   _db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
+  _storage = getStorage(app);
 }
 
 export const auth = _auth;
 export const db = _db;
+export const storage = _storage;
