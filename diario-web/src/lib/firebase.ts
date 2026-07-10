@@ -1,5 +1,5 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { getAuth, type Auth } from "firebase/auth";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -35,12 +35,10 @@ export const missingEnv = Object.entries({
 
 let _auth: Auth | null = null;
 let _db: Firestore | null = null;
-let _provider: GoogleAuthProvider | null = null;
 
 if (firebaseConfigured) {
   const app: FirebaseApp = initializeApp(firebaseConfig);
   _auth = getAuth(app);
-  _provider = new GoogleAuthProvider();
   _db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
@@ -48,4 +46,3 @@ if (firebaseConfigured) {
 
 export const auth = _auth;
 export const db = _db;
-export const googleProvider = _provider;

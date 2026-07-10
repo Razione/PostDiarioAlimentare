@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   onAuthStateChanged,
-  signInWithPopup,
+  signInWithEmailAndPassword,
   signOut,
   type User,
 } from "firebase/auth";
-import { auth, googleProvider } from "../../lib/firebase";
+import { auth } from "../../lib/firebase";
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -22,8 +22,9 @@ export function useAuth() {
     });
   }, []);
 
-  const login = async () => {
-    if (auth && googleProvider) await signInWithPopup(auth, googleProvider);
+  const login = async (email: string, password: string) => {
+    if (!auth) throw new Error("Firebase non configurato");
+    await signInWithEmailAndPassword(auth, email.trim(), password);
   };
   const logout = async () => {
     if (auth) await signOut(auth);

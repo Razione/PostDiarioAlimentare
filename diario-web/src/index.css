@@ -54,3 +54,14 @@ button.primary:hover { background: #006cbe; }
 .tab.active { background: #e5f1fb; color: #0078d4; font-weight: 600; }
 
 .content { padding: 24px; }
+
+.login { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
+.login label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: #374151; }
+.login input {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+}
+.login .primary { margin-top: 4px; }
+.error { color: #b91c1c; font-size: 14px; margin: 0; }

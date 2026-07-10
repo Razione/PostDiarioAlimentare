@@ -23,17 +23,7 @@ export default function App() {
   }
 
   if (!user) {
-    return (
-      <div className="center">
-        <div className="card">
-          <h1>Analisi Diari Alimentari</h1>
-          <p className="muted">Accedi per lavorare sui diari condivisi.</p>
-          <button className="primary" onClick={() => void login()}>
-            Accedi con Google
-          </button>
-        </div>
-      </div>
-    );
+    return <LoginForm onLogin={login} />;
   }
 
   return (
@@ -63,6 +53,63 @@ export default function App() {
         {tab === "bda" && <Placeholder title="BDA" phase="Fase 1" />}
         {tab === "utenti" && <Placeholder title="Utenti" phase="Fase 2" />}
       </main>
+    </div>
+  );
+}
+
+function LoginForm({
+  onLogin,
+}: {
+  onLogin: (email: string, password: string) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await onLogin(email, password);
+    } catch {
+      setError("Accesso fallito: email o password non validi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="center">
+      <form className="card login" onSubmit={submit}>
+        <h1>Analisi Diari Alimentari</h1>
+        <p className="muted">Accedi per lavorare sui diari condivisi.</p>
+        <label>
+          Email
+          <input
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </label>
+        {error && <p className="error">{error}</p>}
+        <button className="primary" type="submit" disabled={busy}>
+          {busy ? "Accesso…" : "Accedi"}
+        </button>
+      </form>
     </div>
   );
 }
