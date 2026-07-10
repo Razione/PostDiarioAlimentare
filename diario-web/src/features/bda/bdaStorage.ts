@@ -1,4 +1,4 @@
-import { ref, getBytes, uploadString } from "firebase/storage";
+import { ref, getBytes, uploadBytes } from "firebase/storage";
 import { storage, TEAM_ID } from "../../lib/firebase";
 import type { Bda } from "./bdaTypes";
 
@@ -20,7 +20,6 @@ export async function loadBda(): Promise<Bda | null> {
 
 /** Carica (sovrascrive) la BDA su Storage. */
 export async function saveBda(bda: Bda): Promise<void> {
-  await uploadString(bdaRef(), JSON.stringify(bda), "raw", {
-    contentType: "application/json",
-  });
+  const blob = new Blob([JSON.stringify(bda)], { type: "application/json" });
+  await uploadBytes(bdaRef(), blob, { contentType: "application/json" });
 }
