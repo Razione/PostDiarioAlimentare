@@ -10,11 +10,14 @@ import {
   type DiaryEntry,
 } from "../../lib/db";
 import { BdaPicker } from "./BdaPicker";
+import { Summary } from "../summary/Summary";
 import {
   MEALS,
   DAYS,
+  SKIP_BDA_COLS,
   buildMnovaConfig,
   computeMnova,
+  type BdaData,
   type BdaFood,
   type CategoryRow,
 } from "../../lib/nutrition";
@@ -24,6 +27,7 @@ export function DiariTab() {
   const { bda } = useBda();
   const [code, setCode] = useState<string | null>(null);
   const [day, setDay] = useState(1);
+  const [showSummary, setShowSummary] = useState(false);
   const [search, setSearch] = useState("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
@@ -56,6 +60,15 @@ export function DiariTab() {
     );
   }, [config, bda]);
 
+  const resolve = useMemo(
+    () => (c: string): BdaData | null => bdaByCode.get(c)?.data ?? null,
+    [bdaByCode],
+  );
+  const nutrientCols = useMemo(
+    () => (bda?.columns ?? []).filter((c) => !SKIP_BDA_COLS.has(c)),
+    [bda],
+  );
+
   const dayEntries = useMemo(
     () =>
       entries
@@ -77,6 +90,8 @@ export function DiariTab() {
     if (code && entry.id) await updateEntry(code, entry.id, { bdaCode });
     setPickerFor(null);
   }
+
+  const pickerTarget = pickerFor ? dayEntries.find((x) => x.id === pickerFor) : undefined;
 
   return (
     <div className="diari">
@@ -108,108 +123,125 @@ export function DiariTab() {
               {DAYS.map((d) => (
                 <button
                   key={d}
-                  className={d === day ? "tab active" : "tab"}
-                  onClick={() => setDay(d)}
+                  className={!showSummary && d === day ? "tab active" : "tab"}
+                  onClick={() => {
+                    setShowSummary(false);
+                    setDay(d);
+                  }}
                 >
                   Giorno {d}
                 </button>
               ))}
+              <button
+                className={showSummary ? "tab active" : "tab"}
+                onClick={() => setShowSummary(true)}
+              >
+                Riepilogo nutrizionale
+              </button>
             </div>
 
-            <AddEntryRow code={code} day={day} />
+            {showSummary ? (
+              <Summary
+                entries={entries}
+                resolve={resolve}
+                nutrientCols={nutrientCols}
+                mnovaConfig={mnovaConfig}
+                config={config}
+              />
+            ) : (
+              <>
+                <AddEntryRow code={code} day={day} />
 
-            <div className="tablewrap" style={{ maxHeight: "60vh", marginTop: 8 }}>
-              <table className="grid">
-                <thead>
-                  <tr>
-                    <th>Pasto</th>
-                    <th>Alimento</th>
-                    <th>Note</th>
-                    <th>Qtà rif.</th>
-                    <th>Qtà (g)</th>
-                    <th>Alimento BDA</th>
-                    <th>Stato</th>
-                    <th>NOVA</th>
-                    <th>mNOVA</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dayEntries.map((e) => {
-                    const food = e.bdaCode ? bdaByCode.get(e.bdaCode) : undefined;
-                    const resolved = !!food;
-                    const orphan = !!e.bdaCode && !food;
-                    const mnova = computeMnova(e.nova, food?.data ?? null, mnovaConfig);
-                    return (
-                      <tr key={e.id}>
-                        <td>{e.meal}</td>
-                        <td>{e.foodName}</td>
-                        <td className="muted">{e.notes}</td>
-                        <td className="muted">{e.qtyRaw}</td>
-                        <td>
-                          <input
-                            className="cell"
-                            type="number"
-                            defaultValue={e.quantityG ?? ""}
-                            onBlur={(ev) => {
-                              const v = ev.target.value.trim();
-                              const q = v === "" ? null : Number(v.replace(",", "."));
-                              if (code && e.id) void updateEntry(code, e.id, { quantityG: q });
-                            }}
-                          />
-                        </td>
-                        <td>{food?.name ?? (orphan ? e.bdaCode : "—")}</td>
-                        <td>{resolved ? "✓" : orphan ? "⚠" : "—"}</td>
-                        <td>
-                          <select
-                            value={e.nova ?? ""}
-                            onChange={(ev) => {
-                              const v = ev.target.value;
-                              if (code && e.id)
-                                void updateEntry(code, e.id, { nova: v === "" ? null : Number(v) });
-                            }}
-                          >
-                            <option value="">—</option>
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                          </select>
-                        </td>
-                        <td>{mnova || "—"}</td>
-                        <td className="row" style={{ gap: 4 }}>
-                          <button
-                            disabled={!bda}
-                            onClick={() => setPickerFor(e.id ?? null)}
-                          >
-                            BDA
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (code && e.id && window.confirm("Eliminare questa voce?"))
-                                void deleteEntry(code, e.id);
-                            }}
-                          >
-                            🗑
-                          </button>
-                        </td>
+                <div className="tablewrap" style={{ maxHeight: "60vh", marginTop: 8 }}>
+                  <table className="grid">
+                    <thead>
+                      <tr>
+                        <th>Pasto</th>
+                        <th>Alimento</th>
+                        <th>Note</th>
+                        <th>Qtà rif.</th>
+                        <th>Qtà (g)</th>
+                        <th>Alimento BDA</th>
+                        <th>Stato</th>
+                        <th>NOVA</th>
+                        <th>mNOVA</th>
+                        <th></th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {dayEntries.map((e) => {
+                        const food = e.bdaCode ? bdaByCode.get(e.bdaCode) : undefined;
+                        const resolved = !!food;
+                        const orphan = !!e.bdaCode && !food;
+                        const mnova = computeMnova(e.nova, food?.data ?? null, mnovaConfig);
+                        return (
+                          <tr key={e.id}>
+                            <td>{e.meal}</td>
+                            <td>{e.foodName}</td>
+                            <td className="muted">{e.notes}</td>
+                            <td className="muted">{e.qtyRaw}</td>
+                            <td>
+                              <input
+                                className="cell"
+                                type="number"
+                                defaultValue={e.quantityG ?? ""}
+                                onBlur={(ev) => {
+                                  const v = ev.target.value.trim();
+                                  const q = v === "" ? null : Number(v.replace(",", "."));
+                                  if (code && e.id) void updateEntry(code, e.id, { quantityG: q });
+                                }}
+                              />
+                            </td>
+                            <td>{food?.name ?? (orphan ? e.bdaCode : "—")}</td>
+                            <td>{resolved ? "✓" : orphan ? "⚠" : "—"}</td>
+                            <td>
+                              <select
+                                value={e.nova ?? ""}
+                                onChange={(ev) => {
+                                  const v = ev.target.value;
+                                  if (code && e.id)
+                                    void updateEntry(code, e.id, {
+                                      nova: v === "" ? null : Number(v),
+                                    });
+                                }}
+                              >
+                                <option value="">—</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                              </select>
+                            </td>
+                            <td>{mnova || "—"}</td>
+                            <td className="row" style={{ gap: 4 }}>
+                              <button disabled={!bda} onClick={() => setPickerFor(e.id ?? null)}>
+                                BDA
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (code && e.id && window.confirm("Eliminare questa voce?"))
+                                    void deleteEntry(code, e.id);
+                                }}
+                              >
+                                🗑
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-            {pickerFor && bda && (() => {
-              const target = dayEntries.find((x) => x.id === pickerFor);
-              return target ? (
-                <BdaPicker
-                  bda={bda}
-                  onPick={(c) => void pick(target, c)}
-                  onClose={() => setPickerFor(null)}
-                />
-              ) : null;
-            })()}
+                {pickerTarget && bda && (
+                  <BdaPicker
+                    bda={bda}
+                    onPick={(c) => void pick(pickerTarget, c)}
+                    onClose={() => setPickerFor(null)}
+                  />
+                )}
+              </>
+            )}
           </>
         )}
       </section>
