@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   computeUserTotals,
   computeMnovaBreakdown,
@@ -11,6 +11,12 @@ import {
   type Formulas,
   type MnovaConfig,
 } from "../../lib/nutrition";
+
+interface PercentTerm {
+  col: string;
+  factor: number;
+  denom?: string;
+}
 import type { DiaryEntry } from "../../lib/db";
 
 export function Summary({
@@ -32,6 +38,8 @@ export function Summary({
   );
   const dec = Number(config["display_decimals"] ?? 2) || 2;
   const fmt = (n: number) => n.toFixed(dec);
+  const percentCfg = (config["percent_config"] as PercentTerm[]) ?? [];
+  const [bScope, setBScope] = useState<string>("media");
 
   const agg = useMemo(
     () =>
@@ -70,9 +78,18 @@ export function Summary({
     (d) => `G${d}: ${missing[d]}`,
   );
 
-  const mediaBreak = breakdown.media;
+  const scopeBreak =
+    bScope === "media" ? breakdown.media : breakdown.perDay[Number(bScope)];
   const totKcal =
-    mediaBreak.kcal["1"] + mediaBreak.kcal["2"] + mediaBreak.kcal["3a+3b"] + mediaBreak.kcal["4a+4b"];
+    scopeBreak.kcal["1"] + scopeBreak.kcal["2"] + scopeBreak.kcal["3a+3b"] + scopeBreak.kcal["4a+4b"];
+
+  // Percentuale di un termine configurato per uno scope.
+  const pctValue = (term: PercentTerm, scopeKey: string): number | null => {
+    const vals = scopeValues[scopeKey];
+    const val = vals[term.col] ?? 0;
+    const den = term.denom ? vals[term.denom] ?? 0 : computeEnergyKcal(vals);
+    return den ? (val * term.factor) / den * 100 : null;
+  };
 
   return (
     <div>
@@ -114,7 +131,55 @@ export function Summary({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 16 }}>Ripartizione per categoria mNOVA (media)</h3>
+      {percentCfg.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 16 }}>Percentuali</h3>
+          <div className="tablewrap" style={{ maxHeight: "35vh" }}>
+            <table className="grid">
+              <thead>
+                <tr>
+                  <th>Nutriente</th>
+                  {scopes.map((s) => (
+                    <th key={s.key} style={{ textAlign: "right" }}>{s.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {percentCfg.map((term) => (
+                  <tr key={term.col}>
+                    <td>{term.col}</td>
+                    {scopes.map((s) => {
+                      const p = pctValue(term, s.key);
+                      return (
+                        <td key={s.key} style={{ textAlign: "right" }}>
+                          {p === null ? "" : fmt(p) + "%"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      <div className="row between" style={{ marginTop: 16, alignItems: "baseline" }}>
+        <h3>Ripartizione per categoria mNOVA</h3>
+        <div className="row" style={{ gap: 4 }}>
+          {[...DAYS.map((d) => ({ k: String(d), l: `G${d}` })), { k: "media", l: "Media" }].map(
+            (s) => (
+              <button
+                key={s.k}
+                className={bScope === s.k ? "tab active" : "tab"}
+                onClick={() => setBScope(s.k)}
+              >
+                {s.l}
+              </button>
+            ),
+          )}
+        </div>
+      </div>
       <div className="tablewrap">
         <table className="grid">
           <thead>
@@ -129,20 +194,20 @@ export function Summary({
             <tr>
               <td><b>g/day</b></td>
               {MNOVA_COLS.map((c) => (
-                <td key={c} style={{ textAlign: "right" }}>{fmt(mediaBreak.grams[c])}</td>
+                <td key={c} style={{ textAlign: "right" }}>{fmt(scopeBreak.grams[c])}</td>
               ))}
             </tr>
             <tr>
               <td><b>Kcal/day</b></td>
               {MNOVA_COLS.map((c) => (
-                <td key={c} style={{ textAlign: "right" }}>{fmt(mediaBreak.kcal[c])}</td>
+                <td key={c} style={{ textAlign: "right" }}>{fmt(scopeBreak.kcal[c])}</td>
               ))}
             </tr>
             <tr>
               <td><b>%Kcal/Kcaltot</b></td>
               {MNOVA_COLS.map((c) => (
                 <td key={c} style={{ textAlign: "right" }}>
-                  {totKcal ? fmt((mediaBreak.kcal[c] / totKcal) * 100) : fmt(0)}
+                  {totKcal ? fmt((scopeBreak.kcal[c] / totKcal) * 100) : fmt(0)}
                 </td>
               ))}
             </tr>
