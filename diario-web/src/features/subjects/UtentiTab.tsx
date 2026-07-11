@@ -1,7 +1,12 @@
 import { useRef, useState } from "react";
 import { useSubjects } from "./useSubjects";
 import { parseContentExport } from "../diary/contentExport";
-import { importDiaries } from "../../lib/db";
+import {
+  importDiaries,
+  addSubject,
+  deleteSubject,
+  updateSubjectNotes,
+} from "../../lib/db";
 
 export function UtentiTab() {
   const { subjects, loading } = useSubjects();
@@ -51,6 +56,15 @@ export function UtentiTab() {
               if (f) void handleFile(f);
             }}
           />
+          <button
+            disabled={busy}
+            onClick={() => {
+              const c = window.prompt("Codice nuovo utente:");
+              if (c && c.trim()) void addSubject(c.trim());
+            }}
+          >
+            + Aggiungi utente
+          </button>
           <button className="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
             {busy ? "Importazione…" : "Importa Content Export"}
           </button>
@@ -78,13 +92,38 @@ export function UtentiTab() {
               <tr>
                 <th>Codice utente</th>
                 <th>Note</th>
+                <th>Voci (assoc/tot)</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {subjects.map((s) => (
                 <tr key={s.code}>
                   <td>{s.code}</td>
-                  <td className="muted">{s.notes}</td>
+                  <td>
+                    <input
+                      className="cell"
+                      style={{ width: "100%" }}
+                      defaultValue={s.notes}
+                      onBlur={(e) => {
+                        if (e.target.value !== s.notes)
+                          void updateSubjectNotes(s.code, e.target.value);
+                      }}
+                    />
+                  </td>
+                  <td className="muted">
+                    {s.assoc}/{s.total}
+                  </td>
+                  <td>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Eliminare l'utente ${s.code} e tutto il suo diario?`))
+                          void deleteSubject(s.code);
+                      }}
+                    >
+                      🗑
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

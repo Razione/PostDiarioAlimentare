@@ -139,6 +139,21 @@ export async function addSubject(code: string, notes = ""): Promise<void> {
   await setDoc(doc(subjectsCol(), code), { notes });
 }
 
+export async function updateSubjectNotes(code: string, notes: string): Promise<void> {
+  await setDoc(doc(subjectsCol(), code), { notes }, { merge: true });
+}
+
+/** Elimina un soggetto con tutte le sue voci ed etichette giorni. */
+export async function deleteSubject(code: string): Promise<void> {
+  const database = requireDb();
+  const snap = await getDocs(entriesCol(code));
+  await commitBatches(snap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => b.delete(d.ref)));
+  const batch = writeBatch(database);
+  for (const day of [1, 2, 3, 4]) batch.delete(doc(dayMetaCol(), `${code}_${day}`));
+  batch.delete(doc(subjectsCol(), code));
+  await batch.commit();
+}
+
 export async function setConfig(config: Record<string, unknown>): Promise<void> {
   await setDoc(doc(requireDb(), "teams", TEAM_ID, "settings", "config"), config, {
     merge: true,
