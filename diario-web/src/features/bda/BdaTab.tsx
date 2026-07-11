@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import Fuse from "fuse.js";
 import { useBda } from "./useBda";
 import { parseBdaWorkbook } from "./parseExcel";
+import { mergeBda } from "./mergeBda";
 import { saveBda } from "./bdaStorage";
 import { categoryCode } from "../../lib/nutrition";
 import type { CategoryRow } from "../../lib/nutrition";
@@ -15,6 +16,7 @@ export function BdaTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const addRef = useRef<HTMLInputElement>(null);
 
   const catMap = useMemo(() => {
     const m: Record<string, CategoryRow> = {};
@@ -50,14 +52,16 @@ export function BdaTab() {
     return list;
   }, [bda, fuse, query, catCode]);
 
-  async function handleFile(file: File) {
+  async function processFile(file: File, mode: "replace" | "add") {
     setBusy(true);
     setMsg(null);
     try {
       const parsed = await parseBdaWorkbook(file);
-      await saveBda(parsed);
+      const toSave = mode === "add" ? mergeBda(bda, parsed) : parsed;
+      await saveBda(toSave);
       setMsg(
-        `BDA aggiornata: ${parsed.foods.length} alimenti, ${parsed.categories.length} categorie.`,
+        `BDA ${mode === "add" ? "aggiornata (alimenti uniti)" : "sostituita"}: ` +
+          `${toSave.foods.length} alimenti, ${toSave.categories.length} categorie.`,
       );
       await reload();
     } catch (e: unknown) {
@@ -65,6 +69,7 @@ export function BdaTab() {
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
+      if (addRef.current) addRef.current.value = "";
     }
   }
 
@@ -80,15 +85,38 @@ export function BdaTab() {
             style={{ display: "none" }}
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void handleFile(f);
+              if (f) void processFile(f, "replace");
             }}
           />
+          <input
+            ref={addRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void processFile(f, "add");
+            }}
+          />
+          {bda && (
+            <button disabled={busy} onClick={() => addRef.current?.click()}>
+              Aggiungi da Excel
+            </button>
+          )}
           <button
             className="primary"
             disabled={busy}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => {
+              if (
+                !bda ||
+                window.confirm(
+                  "Sostituire completamente la BDA esistente? (per unire due BDA usa «Aggiungi da Excel»)",
+                )
+              )
+                fileRef.current?.click();
+            }}
           >
-            {busy ? "Caricamento…" : "Carica BDA da Excel"}
+            {busy ? "Caricamento…" : bda ? "Sostituisci BDA" : "Carica BDA da Excel"}
           </button>
         </div>
       </div>
