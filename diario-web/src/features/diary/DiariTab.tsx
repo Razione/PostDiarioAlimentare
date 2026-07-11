@@ -13,6 +13,7 @@ import {
 } from "../../lib/db";
 import { BdaPicker } from "./BdaPicker";
 import { EntryEditModal } from "./EntryEditModal";
+import { FoodNutrientsModal } from "./FoodNutrientsModal";
 import { Summary } from "../summary/Summary";
 import { exportSummaryXlsx } from "../export/exportExcel";
 import {
@@ -49,6 +50,7 @@ export function DiariTab() {
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [editEntry, setEditEntry] = useState<DiaryEntry | null>(null);
+  const [nutrientsEntry, setNutrientsEntry] = useState<DiaryEntry | null>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
@@ -286,6 +288,13 @@ export function DiariTab() {
                                 BDA
                               </button>
                               <button
+                                disabled={!food}
+                                title="Valori nutrizionali"
+                                onClick={() => setNutrientsEntry(e)}
+                              >
+                                ⓘ
+                              </button>
+                              <button
                                 onClick={() => {
                                   if (code && e.id && window.confirm("Eliminare questa voce?"))
                                     void deleteEntry(code, e.id, !!e.bdaCode);
@@ -319,6 +328,22 @@ export function DiariTab() {
                     onClose={() => setEditEntry(null)}
                   />
                 )}
+
+                {nutrientsEntry &&
+                  (() => {
+                    const f = nutrientsEntry.bdaCode
+                      ? bdaByCode.get(nutrientsEntry.bdaCode)
+                      : undefined;
+                    return f ? (
+                      <FoodNutrientsModal
+                        entry={nutrientsEntry}
+                        food={f}
+                        mnovaConfig={mnovaConfig}
+                        config={config}
+                        onClose={() => setNutrientsEntry(null)}
+                      />
+                    ) : null;
+                  })()}
               </>
             )}
           </>
