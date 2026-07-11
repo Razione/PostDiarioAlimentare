@@ -3,14 +3,16 @@ import { useAuth } from "./features/auth/useAuth";
 import { BdaTab } from "./features/bda/BdaTab";
 import { UtentiTab } from "./features/subjects/UtentiTab";
 import { DiariTab } from "./features/diary/DiariTab";
+import { PreferenzeTab } from "./features/settings/PreferenzeTab";
 import { TEAM_ID, firebaseConfigured, missingEnv } from "./lib/firebase";
 
-type Tab = "diari" | "bda" | "utenti";
+type Tab = "diari" | "bda" | "utenti" | "preferenze";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "diari", label: "Diari" },
   { id: "bda", label: "BDA" },
   { id: "utenti", label: "Utenti" },
+  { id: "preferenze", label: "Preferenze" },
 ];
 
 export default function App() {
@@ -55,6 +57,7 @@ export default function App() {
         {tab === "diari" && <DiariTab />}
         {tab === "bda" && <BdaTab />}
         {tab === "utenti" && <UtentiTab />}
+        {tab === "preferenze" && <PreferenzeTab />}
       </main>
     </div>
   );

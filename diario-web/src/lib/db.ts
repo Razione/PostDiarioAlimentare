@@ -94,6 +94,12 @@ export async function addSubject(code: string, notes = ""): Promise<void> {
   await setDoc(doc(subjectsCol(), code), { notes });
 }
 
+export async function setConfig(config: Record<string, unknown>): Promise<void> {
+  await setDoc(doc(requireDb(), "teams", TEAM_ID, "settings", "config"), config, {
+    merge: true,
+  });
+}
+
 async function commitBatches(ops: Array<(b: ReturnType<typeof writeBatch>) => void>) {
   const database = requireDb();
   for (let i = 0; i < ops.length; i += 400) {
