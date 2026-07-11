@@ -41,12 +41,18 @@ function normalizeSettings(settings: Record<string, unknown>): Record<string, un
   return out;
 }
 
-function toBda(foods: Array<{ id: number; name: string; data: BdaData }>, cats: CategoryRow[]): Bda {
+// L'export desktop salva bda_foods.data come STRINGA JSON grezza: qui la parsa.
+function foodData(f: { data: unknown }): BdaData {
+  return (typeof f.data === "string" ? JSON.parse(f.data) : f.data) as BdaData;
+}
+
+function toBda(foods: Array<{ id: number; name: string; data: unknown }>, cats: CategoryRow[]): Bda {
   const outFoods: BdaFood[] = foods.map((f) => {
-    const code = f.data?.["Codice Alimento"];
-    return { id: f.id, code: code == null || code === "" ? null : String(code), name: f.name, data: f.data };
+    const data = foodData(f);
+    const code = data["Codice Alimento"];
+    return { id: f.id, code: code == null || code === "" ? null : String(code), name: f.name, data };
   });
-  const columns = foods.length ? Object.keys(foods[0].data) : [];
+  const columns = outFoods.length ? Object.keys(outFoods[0].data) : [];
   return { columns, foods: outFoods, categories: cats ?? [], updatedAt: new Date().toISOString() };
 }
 
@@ -65,7 +71,7 @@ export async function parseProjectFile(file: File): Promise<ProjectImport> {
   // Mappa id → Codice Alimento (per risolvere associazioni senza bda_code).
   const id2code: Record<number, string> = {};
   for (const f of raw.bda_foods ?? []) {
-    const c = f.data?.["Codice Alimento"];
+    const c = foodData(f)["Codice Alimento"];
     if (c != null && c !== "") id2code[f.id] = String(c);
   }
 
