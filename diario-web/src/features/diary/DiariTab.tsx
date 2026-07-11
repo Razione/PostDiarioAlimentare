@@ -13,6 +13,7 @@ import {
 } from "../../lib/db";
 import { BdaPicker } from "./BdaPicker";
 import { Summary } from "../summary/Summary";
+import { exportSummaryXlsx } from "../export/exportExcel";
 import {
   MEALS,
   DAYS,
@@ -46,6 +47,7 @@ export function DiariTab() {
   const [statusFilter, setStatusFilter] = useState<"" | StatusClass>("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     let unsub = () => {};
@@ -112,6 +114,20 @@ export function DiariTab() {
 
   const pickerTarget = pickerFor ? dayEntries.find((x) => x.id === pickerFor) : undefined;
 
+  async function doExport() {
+    if (!bda) return;
+    setExporting({ done: 0, total: subjects.length });
+    try {
+      await exportSummaryXlsx(subjects, resolve, nutrientCols, mnovaConfig, config, (done, total) =>
+        setExporting({ done, total }),
+      );
+    } catch (e: unknown) {
+      window.alert("Errore export: " + ((e as Error)?.message ?? ""));
+    } finally {
+      setExporting(null);
+    }
+  }
+
   return (
     <div className="diari">
       <aside className="subjects card">
@@ -147,6 +163,16 @@ export function DiariTab() {
           <span style={{ color: STATUS_COLOR.partial }}>■ in corso</span>{" "}
           <span className="muted">■ da fare</span>
         </div>
+        <button
+          className="primary"
+          style={{ marginTop: 8, width: "100%" }}
+          disabled={!bda || !!exporting || subjects.length === 0}
+          onClick={() => void doExport()}
+        >
+          {exporting
+            ? `Export ${exporting.done}/${exporting.total}…`
+            : "Esporta riepilogo (Excel)"}
+        </button>
       </aside>
 
       <section className="card diarygrid">

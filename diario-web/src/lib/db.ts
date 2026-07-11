@@ -93,6 +93,12 @@ export function listenEntries(
   });
 }
 
+/** Legge una volta tutte le voci di un soggetto. */
+export async function getEntries(code: string): Promise<DiaryEntry[]> {
+  const snap = await getDocs(entriesCol(code));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DiaryEntry, "id">) }));
+}
+
 /** Ascolta le preferenze del team (cutoff, formule, ecc.). */
 export function listenConfig(cb: (config: Record<string, unknown>) => void): () => void {
   const ref = doc(requireDb(), "teams", TEAM_ID, "settings", "config");
