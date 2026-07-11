@@ -11,6 +11,7 @@ import {
   orderBy,
   writeBatch,
   setDoc,
+  increment,
   type Firestore,
 } from "firebase/firestore";
 import { db, TEAM_ID } from "./firebase";
@@ -18,6 +19,8 @@ import { db, TEAM_ID } from "./firebase";
 export interface Subject {
   code: string;
   notes: string;
+  total: number; // voci totali
+  assoc: number; // voci con associazione BDA
 }
 
 export interface DiaryEntry {
@@ -57,8 +60,27 @@ export const dayMetaCol = () =>
 export function listenSubjects(cb: (subjects: Subject[]) => void): () => void {
   const q = query(subjectsCol(), orderBy("__name__"));
   return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ code: d.id, notes: d.data().notes ?? "" })));
+    cb(
+      snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          code: d.id,
+          notes: data.notes ?? "",
+          total: data.total ?? 0,
+          assoc: data.assoc ?? 0,
+        };
+      }),
+    );
   });
+}
+
+/** Aggiorna i contatori (total/assoc) del soggetto in modo incrementale. */
+async function bumpCounts(code: string, dTotal: number, dAssoc: number): Promise<void> {
+  await setDoc(
+    doc(subjectsCol(), code),
+    { total: increment(dTotal), assoc: increment(dAssoc) },
+    { merge: true },
+  );
 }
 
 /** Ascolta le voci di un soggetto in tempo reale. */
@@ -79,6 +101,7 @@ export function listenConfig(cb: (config: Record<string, unknown>) => void): () 
 
 export async function addEntry(code: string, entry: Omit<DiaryEntry, "id">): Promise<void> {
   await addDoc(entriesCol(code), entry);
+  await bumpCounts(code, 1, entry.bdaCode ? 1 : 0);
 }
 export async function updateEntry(
   code: string,
@@ -87,8 +110,24 @@ export async function updateEntry(
 ): Promise<void> {
   await updateDoc(doc(entriesCol(code), id), patch);
 }
-export async function deleteEntry(code: string, id: string): Promise<void> {
+export async function deleteEntry(
+  code: string,
+  id: string,
+  wasAssoc = false,
+): Promise<void> {
   await deleteDoc(doc(entriesCol(code), id));
+  await bumpCounts(code, -1, wasAssoc ? -1 : 0);
+}
+/** Associa/disassocia una voce, aggiornando i contatori. */
+export async function setEntryBda(
+  code: string,
+  id: string,
+  oldCode: string | null,
+  newCode: string | null,
+): Promise<void> {
+  await updateDoc(doc(entriesCol(code), id), { bdaCode: newCode });
+  const dAssoc = (newCode ? 1 : 0) - (oldCode ? 1 : 0);
+  if (dAssoc !== 0) await bumpCounts(code, 0, dAssoc);
 }
 export async function addSubject(code: string, notes = ""): Promise<void> {
   await setDoc(doc(subjectsCol(), code), { notes });
@@ -140,7 +179,13 @@ export async function importDiaries(
   let done = 0;
   const total = data.subjects.length;
   for (const s of data.subjects) {
-    await setDoc(doc(subjectsCol(), s.code), { notes: s.notes ?? "" });
+    const subjEntries = byUser.get(s.code) ?? [];
+    const assoc = subjEntries.filter((e) => e.bdaCode).length;
+    await setDoc(doc(subjectsCol(), s.code), {
+      notes: s.notes ?? "",
+      total: subjEntries.length,
+      assoc,
+    });
 
     // Cancella le voci esistenti del soggetto.
     const existing = await getDocs(entriesCol(s.code));

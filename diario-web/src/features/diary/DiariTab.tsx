@@ -6,8 +6,10 @@ import {
   addEntry,
   updateEntry,
   deleteEntry,
+  setEntryBda,
   listenConfig,
   type DiaryEntry,
+  type Subject,
 } from "../../lib/db";
 import { BdaPicker } from "./BdaPicker";
 import { Summary } from "../summary/Summary";
@@ -22,6 +24,18 @@ import {
   type CategoryRow,
 } from "../../lib/nutrition";
 
+type StatusClass = "none" | "partial" | "full";
+
+function statusOf(s: Subject): StatusClass {
+  if (s.total === 0 || s.assoc === 0) return "none";
+  return s.assoc < s.total ? "partial" : "full";
+}
+const STATUS_COLOR: Record<StatusClass, string> = {
+  none: "inherit",
+  partial: "#b8860b",
+  full: "#2e7d32",
+};
+
 export function DiariTab() {
   const { subjects } = useSubjects();
   const { bda } = useBda();
@@ -29,6 +43,7 @@ export function DiariTab() {
   const [day, setDay] = useState(1);
   const [showSummary, setShowSummary] = useState(false);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | StatusClass>("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
 
@@ -83,11 +98,15 @@ export function DiariTab() {
 
   const filteredSubjects = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? subjects.filter((s) => s.code.toLowerCase().includes(q)) : subjects;
-  }, [subjects, search]);
+    return subjects.filter(
+      (s) =>
+        (!q || s.code.toLowerCase().includes(q)) &&
+        (!statusFilter || statusOf(s) === statusFilter),
+    );
+  }, [subjects, search, statusFilter]);
 
   async function pick(entry: DiaryEntry, bdaCode: string | null) {
-    if (code && entry.id) await updateEntry(code, entry.id, { bdaCode });
+    if (code && entry.id) await setEntryBda(code, entry.id, entry.bdaCode, bdaCode);
     setPickerFor(null);
   }
 
@@ -101,16 +120,32 @@ export function DiariTab() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as "" | StatusClass)}
+        >
+          <option value="">Tutti gli stati</option>
+          <option value="none">Da fare</option>
+          <option value="partial">In corso</option>
+          <option value="full">Completati</option>
+        </select>
         <div className="subjlist">
           {filteredSubjects.map((s) => (
             <div
               key={s.code}
               className={s.code === code ? "subj active" : "subj"}
+              style={{ color: STATUS_COLOR[statusOf(s)] }}
+              title={`Associate: ${s.assoc}/${s.total}`}
               onClick={() => setCode(s.code)}
             >
               {s.code}
             </div>
           ))}
+        </div>
+        <div className="legend small">
+          <span style={{ color: STATUS_COLOR.full }}>■ fatti</span>{" "}
+          <span style={{ color: STATUS_COLOR.partial }}>■ in corso</span>{" "}
+          <span className="muted">■ da fare</span>
         </div>
       </aside>
 
@@ -220,7 +255,7 @@ export function DiariTab() {
                               <button
                                 onClick={() => {
                                   if (code && e.id && window.confirm("Eliminare questa voce?"))
-                                    void deleteEntry(code, e.id);
+                                    void deleteEntry(code, e.id, !!e.bdaCode);
                                 }}
                               >
                                 🗑

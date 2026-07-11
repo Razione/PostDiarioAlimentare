@@ -97,7 +97,8 @@ export async function parseContentExport(file: File): Promise<DiaryImport> {
       if (rawDate === null || str(rawDate).toLowerCase() === "nan") return;
       const day = dayIdx + 1;
 
-      if (!subjects.has(userCode)) subjects.set(userCode, { code: userCode, notes: "" });
+      if (!subjects.has(userCode))
+        subjects.set(userCode, { code: userCode, notes: "", total: 0, assoc: 0 });
       dayMeta.push({ code: userCode, day, dateLabel: formatDate(rawDate) });
 
       for (const [meal, foodOffset, maxItems] of CONTENT_EXPORT_MEALS) {

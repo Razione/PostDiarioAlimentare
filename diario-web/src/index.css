@@ -85,7 +85,9 @@ table.grid select, .addrow select, .addrow input { font: inherit; padding: 4px 6
 
 .diari { display: flex; gap: 12px; align-items: flex-start; }
 .subjects { width: 240px; flex-shrink: 0; }
-.subjects input { width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+.subjects input, .subjects select { width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+.legend { margin-top: 8px; }
+.legend span { margin-right: 8px; }
 .subjlist { max-height: 65vh; overflow: auto; border: 1px solid #eef0f2; border-radius: 8px; }
 .subj { padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #f1f3f5; font-size: 14px; }
 .subj:hover { background: #f3f4f6; }
