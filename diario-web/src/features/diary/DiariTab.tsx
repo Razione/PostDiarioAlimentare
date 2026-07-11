@@ -12,6 +12,7 @@ import {
   type Subject,
 } from "../../lib/db";
 import { BdaPicker } from "./BdaPicker";
+import { EntryEditModal } from "./EntryEditModal";
 import { Summary } from "../summary/Summary";
 import { exportSummaryXlsx } from "../export/exportExcel";
 import {
@@ -47,6 +48,7 @@ export function DiariTab() {
   const [statusFilter, setStatusFilter] = useState<"" | StatusClass>("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [editEntry, setEditEntry] = useState<DiaryEntry | null>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
@@ -218,6 +220,8 @@ export function DiariTab() {
                     <thead>
                       <tr>
                         <th>Pasto</th>
+                        <th>Ora</th>
+                        <th>Luogo</th>
                         <th>Alimento</th>
                         <th>Note</th>
                         <th>Qtà rif.</th>
@@ -238,6 +242,8 @@ export function DiariTab() {
                         return (
                           <tr key={e.id}>
                             <td>{e.meal}</td>
+                            <td className="muted">{e.ora}</td>
+                            <td className="muted">{e.luogo}</td>
                             <td>{e.foodName}</td>
                             <td className="muted">{e.notes}</td>
                             <td className="muted">{e.qtyRaw}</td>
@@ -275,6 +281,7 @@ export function DiariTab() {
                             </td>
                             <td>{mnova || "—"}</td>
                             <td className="row" style={{ gap: 4 }}>
+                              <button onClick={() => setEditEntry(e)}>✎</button>
                               <button disabled={!bda} onClick={() => setPickerFor(e.id ?? null)}>
                                 BDA
                               </button>
@@ -299,6 +306,17 @@ export function DiariTab() {
                     bda={bda}
                     onPick={(c) => void pick(pickerTarget, c)}
                     onClose={() => setPickerFor(null)}
+                  />
+                )}
+
+                {editEntry && (
+                  <EntryEditModal
+                    entry={editEntry}
+                    onSave={(patch) => {
+                      if (code && editEntry.id) void updateEntry(code, editEntry.id, patch);
+                      setEditEntry(null);
+                    }}
+                    onClose={() => setEditEntry(null)}
                   />
                 )}
               </>
