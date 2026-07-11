@@ -7,6 +7,7 @@ import {
   updateEntry,
   deleteEntry,
   setEntryBda,
+  setSubjectCounts,
   listenConfig,
   type DiaryEntry,
   type Subject,
@@ -64,6 +65,18 @@ export function DiariTab() {
   }, []);
 
   const entries = useEntries(code);
+
+  // Auto-corregge i conteggi del soggetto aperto dai dati reali (realtime),
+  // così lo stato (da fare/in corso/completato) è sempre coerente.
+  useEffect(() => {
+    if (!code) return;
+    const total = entries.length;
+    const assoc = entries.filter((e) => e.bdaCode).length;
+    const subj = subjects.find((s) => s.code === code);
+    if (subj && (subj.total !== total || subj.assoc !== assoc)) {
+      void setSubjectCounts(code, total, assoc);
+    }
+  }, [entries, code, subjects]);
 
   const bdaByCode = useMemo(() => {
     const m = new Map<string, BdaFood>();

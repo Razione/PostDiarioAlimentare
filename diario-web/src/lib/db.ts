@@ -143,6 +143,15 @@ export async function updateSubjectNotes(code: string, notes: string): Promise<v
   await setDoc(doc(subjectsCol(), code), { notes }, { merge: true });
 }
 
+/** Imposta i conteggi assoluti (usato per auto-correggere dati preesistenti). */
+export async function setSubjectCounts(
+  code: string,
+  total: number,
+  assoc: number,
+): Promise<void> {
+  await setDoc(doc(subjectsCol(), code), { total, assoc }, { merge: true });
+}
+
 /** Elimina un soggetto con tutte le sue voci ed etichette giorni. */
 export async function deleteSubject(code: string): Promise<void> {
   const database = requireDb();

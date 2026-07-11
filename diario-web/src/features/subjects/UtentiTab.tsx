@@ -1,22 +1,68 @@
 import { useRef, useState } from "react";
 import { useSubjects } from "./useSubjects";
 import { parseContentExport } from "../diary/contentExport";
+import { parseProjectFile } from "./projectImport";
 import { ImportChoiceModal, type ImportAnalysis } from "./ImportChoiceModal";
+import { saveBda } from "../bda/bdaStorage";
+import type { Bda } from "../bda/bdaTypes";
 import {
   importDiaries,
   addSubject,
   deleteSubject,
   updateSubjectNotes,
+  setConfig,
   type DiaryImport,
 } from "../../lib/db";
+
+interface ImportExtra {
+  config: Record<string, unknown> | null;
+  bda: Bda | null;
+}
 
 export function UtentiTab() {
   const { subjects, loading } = useSubjects();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [pending, setPending] = useState<{ data: DiaryImport; analysis: ImportAnalysis } | null>(null);
+  const [pending, setPending] = useState<
+    { data: DiaryImport; analysis: ImportAnalysis; extra?: ImportExtra } | null
+  >(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const projRef = useRef<HTMLInputElement>(null);
+
+  function classify(data: DiaryImport): ImportAnalysis {
+    const local = new Map(subjects.map((s) => [s.code, s]));
+    const analysis: ImportAnalysis = { newCodes: [], autoCodes: [], conflictCodes: [] };
+    for (const s of data.subjects) {
+      const l = local.get(s.code);
+      if (!l) analysis.newCodes.push(s.code);
+      else if ((l.assoc ?? 0) === 0) analysis.autoCodes.push(s.code);
+      else analysis.conflictCodes.push(s.code);
+    }
+    return analysis;
+  }
+
+  async function handleProjectFile(file: File) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const proj = await parseProjectFile(file);
+      if (!proj.diary.subjects.length && !proj.config && !proj.bda) {
+        setMsg("Il file non contiene dati importabili.");
+        return;
+      }
+      setPending({
+        data: proj.diary,
+        analysis: classify(proj.diary),
+        extra: { config: proj.config, bda: proj.bda },
+      });
+    } catch (e: unknown) {
+      setMsg("Errore: " + ((e as Error)?.message ?? "file non valido."));
+    } finally {
+      setBusy(false);
+      if (projRef.current) projRef.current.value = "";
+    }
+  }
 
   async function handleFile(file: File) {
     setBusy(true);
@@ -27,15 +73,7 @@ export function UtentiTab() {
         setMsg("Nessun utente valido trovato nel file.");
         return;
       }
-      const local = new Map(subjects.map((s) => [s.code, s]));
-      const analysis: ImportAnalysis = { newCodes: [], autoCodes: [], conflictCodes: [] };
-      for (const s of data.subjects) {
-        const l = local.get(s.code);
-        if (!l) analysis.newCodes.push(s.code);
-        else if ((l.assoc ?? 0) === 0) analysis.autoCodes.push(s.code);
-        else analysis.conflictCodes.push(s.code);
-      }
-      setPending({ data, analysis });
+      setPending({ data, analysis: classify(data) });
     } catch (e: unknown) {
       setMsg("Errore: " + ((e as Error)?.message ?? "impossibile leggere il file."));
     } finally {
@@ -58,11 +96,17 @@ export function UtentiTab() {
     setProgress({ done: 0, total: filtered.subjects.length });
     try {
       await importDiaries(filtered, (done, total) => setProgress({ done, total }));
+      if (pending.extra?.config) await setConfig(pending.extra.config);
+      if (pending.extra?.bda) await saveBda(pending.extra.bda);
       const kept = analysis.conflictCodes.length - overwriteConflicts.length;
+      const extras = [
+        pending.extra?.config ? "configurazione" : "",
+        pending.extra?.bda ? "BDA" : "",
+      ].filter(Boolean);
       setMsg(
         `Aggiunti ${analysis.newCodes.length}, aggiornati ${
           analysis.autoCodes.length + overwriteConflicts.length
-        }, mantenuti ${kept}.`,
+        }, mantenuti ${kept}.` + (extras.length ? ` Importate: ${extras.join(", ")}.` : ""),
       );
     } catch (e: unknown) {
       setMsg("Errore: " + ((e as Error)?.message ?? "import fallito."));
@@ -98,6 +142,19 @@ export function UtentiTab() {
           </button>
           <button className="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
             {busy ? "Importazione…" : "Importa Content Export"}
+          </button>
+          <input
+            ref={projRef}
+            type="file"
+            accept=".json,.gz"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleProjectFile(f);
+            }}
+          />
+          <button disabled={busy} onClick={() => projRef.current?.click()}>
+            Importa progetto (.json.gz)
           </button>
         </div>
       </div>
