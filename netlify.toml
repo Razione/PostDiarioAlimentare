@@ -1,0 +1,11 @@
+# La webapp sta nella sottocartella diario-web/ (la root è l'app desktop Python).
+[build]
+  base = "diario-web"
+  command = "npm run build"
+  publish = "dist"
+
+# SPA: tutte le route servono index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
