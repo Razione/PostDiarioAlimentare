@@ -1,0 +1,8 @@
+# Tratta i file binari senza conversione di fine riga (evita corruzione).
+*.pdf   binary
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.xlsx  binary
+*.gz    binary
+*.db    binary
