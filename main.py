@@ -75,6 +75,10 @@ class BDATab(QWidget):
         btn_load = QPushButton("Carica BDA da Excel")
         btn_load.clicked.connect(self._load_bda)
         tb.addWidget(btn_load)
+        btn_users = QPushButton("Utenti con questo alimento")
+        btn_users.setToolTip("Elenca gli utenti che hanno l'alimento selezionato associato nel diario.")
+        btn_users.clicked.connect(self._show_users_with_food)
+        tb.addWidget(btn_users)
         self.status_lbl = QLabel("Nessuna BDA caricata")
         self.status_lbl.setStyleSheet("color: gray;")
         tb.addWidget(self.status_lbl)
@@ -230,13 +234,38 @@ class BDATab(QWidget):
             vals = [f["name"]] + cat_cells + [
                 ("" if f.get(c) is None else str(f[c])) for c in nutrient_cols
             ]
-            self.tree.addTopLevelItem(QTreeWidgetItem(vals))
+            item = QTreeWidgetItem(vals)
+            item.setData(0, Qt.ItemDataRole.UserRole, f["id"])
+            self.tree.addTopLevelItem(item)
             shown += 1
 
         if sel_code:
             self.status_lbl.setText(
                 f"{shown:,} alimenti · {self.cat_filter.currentText()}"
             )
+
+    def _show_users_with_food(self):
+        items = self.tree.selectedItems()
+        if not items:
+            QMessageBox.information(self, "Utenti con alimento",
+                                    "Seleziona un alimento nella lista BDA.")
+            return
+        fid = items[0].data(0, Qt.ItemDataRole.UserRole)
+        if fid is None:
+            return
+        name = items[0].text(0)
+        rows = self.db.users_with_bda(fid)
+        if not rows:
+            QMessageBox.information(self, "Utenti con alimento",
+                                    f"Nessun utente ha «{name}» associato.")
+            return
+        lines = [f"{code}  ({n} voci)" for code, n in rows]
+        box = QMessageBox(self)
+        box.setWindowTitle("Utenti con alimento")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(f"{len(rows)} utenti hanno «{name}» associato.")
+        box.setDetailedText("\n".join(lines))
+        box.exec()
 
     def _populate_cat_filter(self, cat_map):
         """Popola il combo del filtro categoria (solo sotto-categorie), una volta."""

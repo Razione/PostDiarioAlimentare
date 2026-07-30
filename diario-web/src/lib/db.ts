@@ -1,6 +1,7 @@
 // Accesso a Firestore per soggetti, voci di diario, etichette giorni.
 import {
   collection,
+  collectionGroup,
   doc,
   addDoc,
   updateDoc,
@@ -8,6 +9,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  where,
   orderBy,
   writeBatch,
   setDoc,
@@ -91,6 +93,22 @@ export function listenEntries(
   return onSnapshot(entriesCol(code), (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DiaryEntry, "id">) })));
   });
+}
+
+/** Utenti che hanno un dato alimento BDA (per codice) associato nel diario. */
+export async function usersWithBda(
+  bdaCode: string,
+): Promise<Array<{ code: string; count: number }>> {
+  const q = query(collectionGroup(requireDb(), "entries"), where("bdaCode", "==", bdaCode));
+  const snap = await getDocs(q);
+  const counts = new Map<string, number>();
+  for (const d of snap.docs) {
+    const subjectCode = d.ref.parent.parent?.id; // teams/{t}/subjects/{code}/entries/{id}
+    if (subjectCode) counts.set(subjectCode, (counts.get(subjectCode) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /** Legge una volta tutte le voci di un soggetto. */

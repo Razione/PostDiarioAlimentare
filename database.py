@@ -431,6 +431,17 @@ class Database:
             ).fetchone()
         return row["tot"] or 0, row["assoc"] or 0
 
+    def users_with_bda(self, food_id):
+        """Utenti che hanno l'alimento BDA (per id) associato nel diario.
+        Ritorna lista di (user_code, numero_voci)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT user_code, COUNT(*) AS n FROM diary_entries "
+                "WHERE bda_food_id=? GROUP BY user_code ORDER BY user_code",
+                (food_id,),
+            ).fetchall()
+        return [(r["user_code"], r["n"]) for r in rows]
+
     def count_entries_all(self) -> dict:
         """{user_code: (tot, assoc)} per tutti gli utenti, in un'unica query.
         'assoc' conta solo le associazioni risolvibili (alimento BDA esistente)."""

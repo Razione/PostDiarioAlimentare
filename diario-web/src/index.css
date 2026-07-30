@@ -80,6 +80,7 @@ table.grid th, table.grid td { text-align: left; padding: 6px 10px; border-botto
 table.grid thead th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
 table.grid tbody tr:hover { background: #f8fafc; }
 tr.clickable { cursor: pointer; }
+tr.rowsel { background: #e5f1fb !important; }
 input.cell { width: 70px; font: inherit; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
 table.grid select, .addrow select, .addrow input { font: inherit; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
 

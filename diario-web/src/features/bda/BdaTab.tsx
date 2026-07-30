@@ -4,8 +4,9 @@ import { useBda } from "./useBda";
 import { parseBdaWorkbook } from "./parseExcel";
 import { mergeBda } from "./mergeBda";
 import { saveBda } from "./bdaStorage";
+import { usersWithBda } from "../../lib/db";
 import { categoryCode } from "../../lib/nutrition";
-import type { CategoryRow } from "../../lib/nutrition";
+import type { BdaFood, CategoryRow } from "../../lib/nutrition";
 
 const MAX_ROWS = 500;
 
@@ -15,8 +16,26 @@ export function BdaTab() {
   const [catCode, setCatCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [selected, setSelected] = useState<BdaFood | null>(null);
+  const [usersResult, setUsersResult] = useState<
+    { name: string; users: Array<{ code: string; count: number }> } | null
+  >(null);
+  const [searchingUsers, setSearchingUsers] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
+
+  async function findUsers() {
+    if (!selected?.code) return;
+    setSearchingUsers(true);
+    try {
+      const users = await usersWithBda(selected.code);
+      setUsersResult({ name: selected.name, users });
+    } catch (e: unknown) {
+      setMsg("Errore ricerca utenti: " + ((e as Error)?.message ?? ""));
+    } finally {
+      setSearchingUsers(false);
+    }
+  }
 
   const catMap = useMemo(() => {
     const m: Record<string, CategoryRow> = {};
@@ -99,6 +118,11 @@ export function BdaTab() {
             }}
           />
           {bda && (
+            <button disabled={!selected || searchingUsers} onClick={() => void findUsers()}>
+              {searchingUsers ? "Ricerca…" : "Utenti con questo alimento"}
+            </button>
+          )}
+          {bda && (
             <button disabled={busy} onClick={() => addRef.current?.click()}>
               Aggiungi da Excel
             </button>
@@ -152,6 +176,7 @@ export function BdaTab() {
           <p className="muted small">
             {results.length} alimenti
             {results.length > MAX_ROWS ? ` (mostrati i primi ${MAX_ROWS})` : ""}
+            {selected ? ` · selezionato: ${selected.name}` : " · (clicca una riga per selezionare)"}
           </p>
 
           <div className="tablewrap">
@@ -167,7 +192,11 @@ export function BdaTab() {
                 {results.slice(0, MAX_ROWS).map((f) => {
                   const cc = categoryCode(f.data["Categoria Merceologica"]);
                   return (
-                    <tr key={f.id}>
+                    <tr
+                      key={f.id}
+                      className={selected?.id === f.id ? "clickable rowsel" : "clickable"}
+                      onClick={() => setSelected(f)}
+                    >
                       <td>{f.name}</td>
                       <td>{catMap[cc]?.name_it ?? ""}</td>
                       <td className="muted">{f.code ?? ""}</td>
@@ -178,6 +207,46 @@ export function BdaTab() {
             </table>
           </div>
         </>
+      )}
+
+      {usersResult && (
+        <div className="modal-backdrop" onClick={() => setUsersResult(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row between">
+              <h3>Utenti con «{usersResult.name}»</h3>
+              <button onClick={() => setUsersResult(null)}>✕</button>
+            </div>
+            {usersResult.users.length === 0 ? (
+              <p className="muted">Nessun utente ha questo alimento associato.</p>
+            ) : (
+              <>
+                <p className="muted small">{usersResult.users.length} utenti.</p>
+                <div className="tablewrap" style={{ maxHeight: "55vh" }}>
+                  <table className="grid">
+                    <thead>
+                      <tr>
+                        <th>Utente</th>
+                        <th>Voci</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usersResult.users.map((u) => (
+                        <tr key={u.code}>
+                          <td>{u.code}</td>
+                          <td className="muted">{u.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+            <div className="row between" style={{ marginTop: 8 }}>
+              <span />
+              <button className="primary" onClick={() => setUsersResult(null)}>Chiudi</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
