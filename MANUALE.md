@@ -1,6 +1,6 @@
 # Analisi Diari Alimentari — Guida utente
 
-Versione applicazione: **1.2.9**
+Versione applicazione: **1.2.10**
 
 Applicazione desktop (Windows e macOS) per analizzare diari alimentari su **4 giorni**:
 si associa ogni alimento del diario a una voce della **Banca Dati di composizione
@@ -27,6 +27,28 @@ Tutti i dati (utenti, diari, BDA, preferenze) stanno in un singolo database, **p
 
 I dati **persistono** tra un aggiornamento dell'app e l'altro. Per spostarli su un altro
 computer usa **File → Esporta/Importa progetto** (vedi §9).
+
+### Aggiornare l'app
+Quando esce una nuova versione (pagina **Releases**), l'aggiornamento è manuale ma semplice e
+**non cancella i dati**: utenti, diari, BDA e preferenze restano nel database indicato sopra.
+La versione installata la trovi in **Aiuto → Informazioni** (ed è mostrata in cima a questa
+guida, **Aiuto → Guida / Manuale**); confrontala con quella più recente sulla pagina Releases.
+
+**Windows**
+1. Scarica il nuovo `DiarioAlimentare-Windows.zip` dalla pagina Releases.
+2. **Chiudi** l'app se è aperta.
+3. Estrai lo zip e **sostituisci** la vecchia cartella (o `DiarioAlimentare.exe`) con la nuova.
+4. Riavvia `DiarioAlimentare.exe`: ritrovi tutti i tuoi dati.
+
+**macOS**
+1. Scarica il nuovo `DiarioAlimentare-macOS.zip`.
+2. **Chiudi** l'app.
+3. Estrai e **trascina la nuova `DiarioAlimentare.app`** al posto della vecchia (es. in
+   *Applicazioni*), sostituendola.
+4. Al primo avvio, se compare l'avviso di sicurezza fai **clic destro sull'app → Apri**.
+
+Se preferisci non sovrascrivere, prima di aggiornare puoi fare un backup con
+**File → Esporta progetto** (vedi §9).
 
 ---
 
@@ -76,6 +98,8 @@ Gestione anagrafica dei soggetti e relative note.
 - **Ricerca** per nome e **filtro per categoria**.
 - Gli **id degli alimenti sono stabili** (basati sul «Codice Alimento»): ricaricando una
   BDA aggiornata, le associazioni già fatte **non si rompono**.
+- **Utenti con questo alimento**: seleziona un alimento nell'elenco e premi il pulsante per
+  vedere **quali utenti** hanno quell'alimento BDA associato nel diario (con il numero di voci).
 
 ---
 
@@ -84,6 +108,10 @@ Gestione anagrafica dei soggetti e relative note.
 ### Barra utenti (sinistra)
 - **Cerca utente** e **filtro per stato** (Tutti / Da fare / In corso / Completati): i due
   filtri si combinano.
+- **Cerca per alimento**: mostra solo gli utenti che hanno un certo alimento, scegliendo se
+  cercare per **Diario** (nel testo dell'alimento scritto nel diario **e nelle note**) o per
+  **BDA** (nell'alimento della banca dati associato). Aprendo un utente, le **righe che
+  corrispondono** vengono **evidenziate** nella griglia, così si individuano subito.
 - L'elenco ha **caselle di selezione** (servono per l'export multiplo).
 - Il **colore del testo** indica lo stato di associazione dell'utente:
   **verde** = tutte le voci associate · **ambra** = associazione in corso ·
