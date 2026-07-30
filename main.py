@@ -24,6 +24,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush, QFont, QAction, QIcon, QKeySequence
 
 from database import Database
+from updater import UpdateChecker
 
 
 def resource_path(rel: str) -> str:
@@ -1551,12 +1552,14 @@ class App(QMainWindow):
         self.setMinimumSize(850, 520)
 
         self.db = Database()
+        self._updater = UpdateChecker(self)
         self._load_font_prefs()
         self._apply_interface_font()     # font interfaccia (globale) prima di costruire
         self._build_menu()
         self._build_ui()
         self._apply_table_font()         # font tabelle dati (dopo aver creato le viste)
         self.diary_tab.refresh_users()
+        self._updater.check(silent=True)  # controllo aggiornamenti non invasivo all'avvio
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -1636,6 +1639,9 @@ class App(QMainWindow):
         act_guide = QAction("Guida / Manuale", self)
         act_guide.triggered.connect(self._show_guide)
         help_m.addAction(act_guide)
+        act_update = QAction("Controlla aggiornamenti…", self)
+        act_update.triggered.connect(lambda: self._updater.check(silent=False))
+        help_m.addAction(act_update)
         act_about = QAction("Informazioni", self)
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)

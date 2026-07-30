@@ -32,6 +32,8 @@ a = Analysis(
                 "styles",
                 "imageformats",
                 "iconengines",
+                "tls",                 # backend TLS per QtNetwork (controllo aggiornamenti HTTPS)
+                "networkinformation",
             ]
         }
     },
