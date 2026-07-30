@@ -53,6 +53,7 @@ export function DiariTab() {
   const [foodMode, setFoodMode] = useState<"diary" | "bda">("diary");
   const [foodSet, setFoodSet] = useState<Set<string> | null>(null);
   const [loadingFood, setLoadingFood] = useState(false);
+  const [foodError, setFoodError] = useState<string | null>(null);
   const allEntriesRef = useRef<
     Array<{ userCode: string; foodName: string; notes: string; bdaCode: string | null }> | null
   >(null);
@@ -147,12 +148,18 @@ export function DiariTab() {
         return;
       }
       setLoadingFood(true);
+      setFoodError(null);
       try {
         if (!allEntriesRef.current) allEntriesRef.current = await getAllEntries();
         if (cancelled) return;
         const set = new Set<string>();
         for (const e of allEntriesRef.current) if (foodMatch(e)) set.add(e.userCode);
         setFoodSet(set);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Ricerca alimento fallita:", err);
+          setFoodError((err as Error)?.message ?? "errore di lettura");
+        }
       } finally {
         if (!cancelled) setLoadingFood(false);
       }
@@ -227,6 +234,7 @@ export function DiariTab() {
           </select>
         </div>
         {loadingFood && <p className="muted small">Ricerca…</p>}
+        {foodError && <p className="error small">Ricerca non riuscita: {foodError}</p>}
         <div className="subjlist">
           {filteredSubjects.map((s) => (
             <div

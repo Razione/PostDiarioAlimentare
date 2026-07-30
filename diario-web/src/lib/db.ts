@@ -1,7 +1,6 @@
 // Accesso a Firestore per soggetti, voci di diario, etichette giorni.
 import {
   collection,
-  collectionGroup,
   doc,
   addDoc,
   updateDoc,
@@ -95,36 +94,55 @@ export function listenEntries(
   });
 }
 
-/** Utenti che hanno un dato alimento BDA (per codice) associato nel diario. */
+/** Codici di tutti i soggetti del team. */
+export async function getSubjectCodes(): Promise<string[]> {
+  const snap = await getDocs(subjectsCol());
+  return snap.docs.map((d) => d.id);
+}
+
+/**
+ * Utenti che hanno un dato alimento BDA (per codice) associato nel diario.
+ * Legge le voci per-soggetto (niente collection-group: le letture per percorso
+ * sono già autorizzate dalle regole, come per la griglia del diario).
+ */
 export async function usersWithBda(
   bdaCode: string,
 ): Promise<Array<{ code: string; count: number }>> {
-  const q = query(collectionGroup(requireDb(), "entries"), where("bdaCode", "==", bdaCode));
-  const snap = await getDocs(q);
-  const counts = new Map<string, number>();
-  for (const d of snap.docs) {
-    const subjectCode = d.ref.parent.parent?.id; // teams/{t}/subjects/{code}/entries/{id}
-    if (subjectCode) counts.set(subjectCode, (counts.get(subjectCode) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([code, count]) => ({ code, count }))
-    .sort((a, b) => a.code.localeCompare(b.code));
+  const codes = await getSubjectCodes();
+  const results: Array<{ code: string; count: number }> = [];
+  await Promise.all(
+    codes.map(async (code) => {
+      const snap = await getDocs(query(entriesCol(code), where("bdaCode", "==", bdaCode)));
+      if (snap.size > 0) results.push({ code, count: snap.size });
+    }),
+  );
+  return results.sort((a, b) => a.code.localeCompare(b.code));
 }
 
-/** Legge (una volta) tutte le voci del team, per la ricerca per alimento. */
+/**
+ * Legge (una volta) tutte le voci del team, per la ricerca per alimento.
+ * Scorre i soggetti e legge ogni sottocollezione (niente collection-group).
+ */
 export async function getAllEntries(): Promise<
   Array<{ userCode: string; foodName: string; notes: string; bdaCode: string | null }>
 > {
-  const snap = await getDocs(collectionGroup(requireDb(), "entries"));
-  return snap.docs.map((d) => {
-    const data = d.data() as { foodName?: string; notes?: string; bdaCode?: string | null };
-    return {
-      userCode: d.ref.parent.parent?.id ?? "",
-      foodName: data.foodName ?? "",
-      notes: data.notes ?? "",
-      bdaCode: data.bdaCode ?? null,
-    };
-  });
+  const codes = await getSubjectCodes();
+  const out: Array<{ userCode: string; foodName: string; notes: string; bdaCode: string | null }> = [];
+  await Promise.all(
+    codes.map(async (code) => {
+      const snap = await getDocs(entriesCol(code));
+      for (const d of snap.docs) {
+        const data = d.data() as { foodName?: string; notes?: string; bdaCode?: string | null };
+        out.push({
+          userCode: code,
+          foodName: data.foodName ?? "",
+          notes: data.notes ?? "",
+          bdaCode: data.bdaCode ?? null,
+        });
+      }
+    }),
+  );
+  return out;
 }
 
 /** Legge una volta tutte le voci di un soggetto. */
