@@ -543,7 +543,8 @@ class DayFrame(QWidget):
             for col in range(11):
                 item.setForeground(col, color)
             if _matches(e):
-                hl = QColor("#fff3b0")
+                # Sfondo scuro: leggibile sia col testo bianco/verde sia arancione.
+                hl = QColor("#4527a0")
                 for col in range(11):
                     item.setBackground(col, hl)
             self.tree.addTopLevelItem(item)
