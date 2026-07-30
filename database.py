@@ -456,8 +456,9 @@ class Database:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT DISTINCT user_code FROM diary_entries WHERE food_name LIKE ?",
-                    (q,),
+                    "SELECT DISTINCT user_code FROM diary_entries "
+                    "WHERE food_name LIKE ? OR notes LIKE ?",
+                    (q, q),
                 ).fetchall()
         return {r["user_code"] for r in rows}
 

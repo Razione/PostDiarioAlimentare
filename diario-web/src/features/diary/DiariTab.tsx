@@ -54,7 +54,7 @@ export function DiariTab() {
   const [foodSet, setFoodSet] = useState<Set<string> | null>(null);
   const [loadingFood, setLoadingFood] = useState(false);
   const allEntriesRef = useRef<
-    Array<{ userCode: string; foodName: string; bdaCode: string | null }> | null
+    Array<{ userCode: string; foodName: string; notes: string; bdaCode: string | null }> | null
   >(null);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
@@ -123,12 +123,26 @@ export function DiariTab() {
     [entries, day],
   );
 
+  // Match di una voce col testo cercato: BDA = nome BDA associato; Diario = nome + note.
+  const foodMatch = useMemo(() => {
+    const q = foodQuery.trim().toLowerCase();
+    return (e: { foodName: string; notes: string; bdaCode: string | null }): boolean => {
+      if (!q) return false;
+      if (foodMode === "bda") {
+        const n = e.bdaCode ? bdaByCode.get(e.bdaCode)?.name ?? "" : "";
+        return n.toLowerCase().includes(q);
+      }
+      return (
+        e.foodName.toLowerCase().includes(q) || (e.notes ?? "").toLowerCase().includes(q)
+      );
+    };
+  }, [foodQuery, foodMode, bdaByCode]);
+
   // Filtro per alimento (diario o BDA): carica le voci una volta e filtra i codici.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const q = foodQuery.trim().toLowerCase();
-      if (!q) {
+      if (!foodQuery.trim()) {
         setFoodSet(null);
         return;
       }
@@ -137,15 +151,7 @@ export function DiariTab() {
         if (!allEntriesRef.current) allEntriesRef.current = await getAllEntries();
         if (cancelled) return;
         const set = new Set<string>();
-        for (const e of allEntriesRef.current) {
-          const name =
-            foodMode === "bda"
-              ? e.bdaCode
-                ? bdaByCode.get(e.bdaCode)?.name ?? ""
-                : ""
-              : e.foodName;
-          if (name.toLowerCase().includes(q)) set.add(e.userCode);
-        }
+        for (const e of allEntriesRef.current) if (foodMatch(e)) set.add(e.userCode);
         setFoodSet(set);
       } finally {
         if (!cancelled) setLoadingFood(false);
@@ -154,7 +160,7 @@ export function DiariTab() {
     return () => {
       cancelled = true;
     };
-  }, [foodQuery, foodMode, bdaByCode]);
+  }, [foodQuery, foodMatch]);
 
   const filteredSubjects = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -314,7 +320,7 @@ export function DiariTab() {
                         const orphan = !!e.bdaCode && !food;
                         const mnova = computeMnova(e.nova, food?.data ?? null, mnovaConfig);
                         return (
-                          <tr key={e.id}>
+                          <tr key={e.id} className={foodMatch(e) ? "rowmatch" : undefined}>
                             <td>{e.meal}</td>
                             <td className="muted">{e.ora}</td>
                             <td className="muted">{e.luogo}</td>

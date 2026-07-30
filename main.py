@@ -403,11 +403,19 @@ class DayFrame(QWidget):
         self.day = day
         self.on_change = on_change
         self.user_code = None
+        self._hl_query = ""
+        self._hl_mode = "diary"
         self._build()
 
     def _notify(self):
         if self.on_change:
             self.on_change()
+
+    def set_highlight(self, query, mode):
+        """Evidenzia le righe che corrispondono al testo cercato."""
+        self._hl_query = query or ""
+        self._hl_mode = mode or "diary"
+        self._refresh()
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -496,6 +504,15 @@ class DayFrame(QWidget):
         bda_cache = self.db.get_bda_foods_by_ids(bda_ids) if bda_ids else {}
         mnova_cfg = _load_mnova_config(self.db)
 
+        hlq = self._hl_query.strip().lower()
+
+        def _matches(e):
+            if not hlq:
+                return False
+            if self._hl_mode == "bda":
+                return hlq in (e.get("bda_name") or "").lower()
+            return hlq in (e["food_name"] or "").lower() or hlq in (e.get("notes") or "").lower()
+
         for e in entries:
             nova = e.get("nova")
             bda_data = bda_cache.get(e["bda_food_id"]) if e.get("bda_food_id") else None
@@ -525,6 +542,10 @@ class DayFrame(QWidget):
                 color = QColor("#ffffff")
             for col in range(11):
                 item.setForeground(col, color)
+            if _matches(e):
+                hl = QColor("#fff3b0")
+                for col in range(11):
+                    item.setBackground(col, hl)
             self.tree.addTopLevelItem(item)
         self.tree.blockSignals(False)
 
@@ -1046,11 +1067,10 @@ class DiaryTab(QWidget):
 
     def _on_food_filter(self, *_):
         text = self.food_search.text().strip()
-        if not text:
-            self._food_set = None
-        else:
-            mode = self.food_mode.currentData()
-            self._food_set = self.db.users_by_food(text, mode)
+        mode = self.food_mode.currentData()
+        self._food_set = self.db.users_by_food(text, mode) if text else None
+        for frm in self.day_frames:
+            frm.set_highlight(text, mode)
         self._filter_users()
 
     def _filter_users(self, *_):

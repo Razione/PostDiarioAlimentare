@@ -113,14 +113,15 @@ export async function usersWithBda(
 
 /** Legge (una volta) tutte le voci del team, per la ricerca per alimento. */
 export async function getAllEntries(): Promise<
-  Array<{ userCode: string; foodName: string; bdaCode: string | null }>
+  Array<{ userCode: string; foodName: string; notes: string; bdaCode: string | null }>
 > {
   const snap = await getDocs(collectionGroup(requireDb(), "entries"));
   return snap.docs.map((d) => {
-    const data = d.data() as { foodName?: string; bdaCode?: string | null };
+    const data = d.data() as { foodName?: string; notes?: string; bdaCode?: string | null };
     return {
       userCode: d.ref.parent.parent?.id ?? "",
       foodName: data.foodName ?? "",
+      notes: data.notes ?? "",
       bdaCode: data.bdaCode ?? null,
     };
   });
