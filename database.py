@@ -442,6 +442,25 @@ class Database:
             ).fetchall()
         return [(r["user_code"], r["n"]) for r in rows]
 
+    def users_by_food(self, query, mode="diary"):
+        """Codici utente che hanno un alimento corrispondente a `query`.
+        mode='diary' cerca nel nome del diario, mode='bda' nel nome BDA associato."""
+        q = f"%{query}%"
+        with self._conn() as conn:
+            if mode == "bda":
+                rows = conn.execute(
+                    "SELECT DISTINCT de.user_code FROM diary_entries de "
+                    "JOIN bda_foods bf ON de.bda_food_id = bf.id "
+                    "WHERE bf.name LIKE ?",
+                    (q,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT DISTINCT user_code FROM diary_entries WHERE food_name LIKE ?",
+                    (q,),
+                ).fetchall()
+        return {r["user_code"] for r in rows}
+
     def count_entries_all(self) -> dict:
         """{user_code: (tot, assoc)} per tutti gli utenti, in un'unica query.
         'assoc' conta solo le associazioni risolvibili (alimento BDA esistente)."""

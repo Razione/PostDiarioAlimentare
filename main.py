@@ -900,6 +900,7 @@ class DiaryTab(QWidget):
         self.current_user = None
         self._users = []
         self._status: dict = {}          # code → (tot, assoc)
+        self._food_set = None            # set di codici filtrati per alimento, o None
         self._checked_users: set = set()
         self._build()
 
@@ -926,6 +927,19 @@ class DiaryTab(QWidget):
         self.status_filter.addItem("Completati", "full")
         self.status_filter.currentIndexChanged.connect(self._filter_users)
         left_layout.addWidget(self.status_filter)
+
+        food_row = QHBoxLayout()
+        self.food_search = QLineEdit()
+        self.food_search.setPlaceholderText("Cerca per alimento…")
+        self.food_search.textChanged.connect(self._on_food_filter)
+        food_row.addWidget(self.food_search)
+        self.food_mode = QComboBox()
+        self.food_mode.addItem("Diario", "diary")
+        self.food_mode.addItem("BDA", "bda")
+        self.food_mode.setToolTip("Cerca nell'alimento del diario o nell'alimento BDA associato.")
+        self.food_mode.currentIndexChanged.connect(self._on_food_filter)
+        food_row.addWidget(self.food_mode)
+        left_layout.addLayout(food_row)
 
         self.user_list = QListWidget()
         self.user_list.currentRowChanged.connect(self._on_user_change)
@@ -1030,6 +1044,15 @@ class DiaryTab(QWidget):
                 self.splitter.setSizes(self._saved_sizes)
             self.btn_toggle_users.setText("◀ Nascondi utenti")
 
+    def _on_food_filter(self, *_):
+        text = self.food_search.text().strip()
+        if not text:
+            self._food_set = None
+        else:
+            mode = self.food_mode.currentData()
+            self._food_set = self.db.users_by_food(text, mode)
+        self._filter_users()
+
     def _filter_users(self, *_):
         q = self.search_user.text().strip().lower()
         sel = self.status_filter.currentData()   # None | 'none' | 'partial' | 'full'
@@ -1040,6 +1063,8 @@ class DiaryTab(QWidget):
             code = u["code"]
             hidden = bool(q) and q not in code.lower()
             if sel and _status_class(*self._status.get(code, (0, 0))) != sel:
+                hidden = True
+            if self._food_set is not None and code not in self._food_set:
                 hidden = True
             item.setHidden(hidden)
 

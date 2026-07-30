@@ -111,6 +111,21 @@ export async function usersWithBda(
     .sort((a, b) => a.code.localeCompare(b.code));
 }
 
+/** Legge (una volta) tutte le voci del team, per la ricerca per alimento. */
+export async function getAllEntries(): Promise<
+  Array<{ userCode: string; foodName: string; bdaCode: string | null }>
+> {
+  const snap = await getDocs(collectionGroup(requireDb(), "entries"));
+  return snap.docs.map((d) => {
+    const data = d.data() as { foodName?: string; bdaCode?: string | null };
+    return {
+      userCode: d.ref.parent.parent?.id ?? "",
+      foodName: data.foodName ?? "",
+      bdaCode: data.bdaCode ?? null,
+    };
+  });
+}
+
 /** Legge una volta tutte le voci di un soggetto. */
 export async function getEntries(code: string): Promise<DiaryEntry[]> {
   const snap = await getDocs(entriesCol(code));

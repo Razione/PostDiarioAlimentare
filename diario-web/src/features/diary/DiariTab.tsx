@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSubjects } from "../subjects/useSubjects";
 import { useBda } from "../bda/useBda";
 import { useEntries } from "./useEntries";
@@ -9,6 +9,7 @@ import {
   setEntryBda,
   setSubjectCounts,
   listenConfig,
+  getAllEntries,
   type DiaryEntry,
   type Subject,
 } from "../../lib/db";
@@ -48,6 +49,13 @@ export function DiariTab() {
   const [showSummary, setShowSummary] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | StatusClass>("");
+  const [foodQuery, setFoodQuery] = useState("");
+  const [foodMode, setFoodMode] = useState<"diary" | "bda">("diary");
+  const [foodSet, setFoodSet] = useState<Set<string> | null>(null);
+  const [loadingFood, setLoadingFood] = useState(false);
+  const allEntriesRef = useRef<
+    Array<{ userCode: string; foodName: string; bdaCode: string | null }> | null
+  >(null);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [editEntry, setEditEntry] = useState<DiaryEntry | null>(null);
@@ -115,14 +123,48 @@ export function DiariTab() {
     [entries, day],
   );
 
+  // Filtro per alimento (diario o BDA): carica le voci una volta e filtra i codici.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const q = foodQuery.trim().toLowerCase();
+      if (!q) {
+        setFoodSet(null);
+        return;
+      }
+      setLoadingFood(true);
+      try {
+        if (!allEntriesRef.current) allEntriesRef.current = await getAllEntries();
+        if (cancelled) return;
+        const set = new Set<string>();
+        for (const e of allEntriesRef.current) {
+          const name =
+            foodMode === "bda"
+              ? e.bdaCode
+                ? bdaByCode.get(e.bdaCode)?.name ?? ""
+                : ""
+              : e.foodName;
+          if (name.toLowerCase().includes(q)) set.add(e.userCode);
+        }
+        setFoodSet(set);
+      } finally {
+        if (!cancelled) setLoadingFood(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [foodQuery, foodMode, bdaByCode]);
+
   const filteredSubjects = useMemo(() => {
     const q = search.trim().toLowerCase();
     return subjects.filter(
       (s) =>
         (!q || s.code.toLowerCase().includes(q)) &&
-        (!statusFilter || statusOf(s) === statusFilter),
+        (!statusFilter || statusOf(s) === statusFilter) &&
+        (!foodSet || foodSet.has(s.code)),
     );
-  }, [subjects, search, statusFilter]);
+  }, [subjects, search, statusFilter, foodSet]);
 
   async function pick(entry: DiaryEntry, bdaCode: string | null) {
     if (code && entry.id) await setEntryBda(code, entry.id, entry.bdaCode, bdaCode);
@@ -162,6 +204,23 @@ export function DiariTab() {
           <option value="partial">In corso</option>
           <option value="full">Completati</option>
         </select>
+        <div className="row" style={{ gap: 4 }}>
+          <input
+            placeholder="Cerca per alimento…"
+            value={foodQuery}
+            onChange={(e) => setFoodQuery(e.target.value)}
+            style={{ flex: 1, marginBottom: 0 }}
+          />
+          <select
+            value={foodMode}
+            onChange={(e) => setFoodMode(e.target.value as "diary" | "bda")}
+            style={{ width: 90, marginBottom: 0 }}
+          >
+            <option value="diary">Diario</option>
+            <option value="bda">BDA</option>
+          </select>
+        </div>
+        {loadingFood && <p className="muted small">Ricerca…</p>}
         <div className="subjlist">
           {filteredSubjects.map((s) => (
             <div
