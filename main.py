@@ -1564,6 +1564,9 @@ class App(QMainWindow):
         self._apply_table_font()         # font tabelle dati (dopo aver creato le viste)
         self.db.set_change_listener(self._mark_dirty)
         self.diary_tab.refresh_users()
+        # Eventuale lavoro residuo nel DB (crash/prima migrazione) è "da salvare"
+        # finché _startup_flow non lo risolve: così una chiusura non lo cancella.
+        self._dirty = self.db.has_data()
         self._update_title()
         self._updater.check(silent=True)  # controllo aggiornamenti non invasivo all'avvio
         # All'avvio parti "pulito": chiedi quale progetto aprire (a finestra mostrata).
@@ -2021,14 +2024,35 @@ class App(QMainWindow):
             box.setText("È stato trovato del lavoro non salvato dalla sessione precedente.")
             box.setInformativeText("Vuoi salvarlo come progetto?")
             btn_save = box.addButton("Salva come progetto…", QMessageBox.ButtonRole.AcceptRole)
-            box.addButton("Scarta", QMessageBox.ButtonRole.DestructiveRole)
+            btn_discard = box.addButton("Scarta", QMessageBox.ButtonRole.DestructiveRole)
             box.setDefaultButton(btn_save)
             box.exec()
-            if box.clickedButton() is btn_save:
+            clicked = box.clickedButton()
+
+            if clicked is btn_save:
                 self._dirty = True
                 if self._save_project_as():   # salvato → continua a lavorarci
                     self._refresh_all()
                     return
+                # Salvataggio annullato: NON scartare i dati. Li tengo come
+                # progetto non salvato (il titolo mostra «*»); si potrà salvare
+                # da File → Salva progetto.
+                self._refresh_all()
+                self._update_title()
+                return
+
+            discard_confirmed = clicked is btn_discard and QMessageBox.warning(
+                self, "Scarta lavoro",
+                "Scartare definitivamente il lavoro non salvato?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) == QMessageBox.StandardButton.Yes
+            if not discard_confirmed:
+                # «Scarta» annullato o finestra chiusa → tieni i dati (non salvati).
+                self._dirty = True
+                self._refresh_all()
+                self._update_title()
+                return
             self.db.clear_all()
             self._dirty = False
             self._refresh_all()
