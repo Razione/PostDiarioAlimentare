@@ -20,7 +20,7 @@ inclusa la classificazione **NOVA / mNOVA** del grado di processazione.
    dovrai caricare la BDA e creare/importare gli utenti (vedi §9, «Progetti»).
 
 ### Dove vengono salvati i dati
-Il tuo lavoro vive in **file di progetto** (`.json.gz`) che salvi dove preferisci: un progetto
+Il tuo lavoro vive in **file di progetto** (`.diario`) che salvi dove preferisci: un progetto
 contiene utenti, diari, BDA e configurazione. Puoi avere **più progetti** e aprire quello che
 ti serve. L'app usa internamente un database temporaneo che viene **azzerato alla chiusura**,
 quindi ciò che conta è **salvare il progetto** (le preferenze dell'app, come la dimensione del
@@ -203,9 +203,9 @@ Scheda all'interno dei giorni. Mostra, per **ogni giorno** e in **media (4 giorn
 ## 9. Progetti, Import / Export
 
 ### Progetti (File → Nuovo / Apri / Salva)
-Il lavoro vive in **file di progetto** (`.json.gz`, compressi) che contengono **tutto**: utenti,
+Il lavoro vive in **file di progetto** (`.diario`, JSON compresso) che contengono **tutto**: utenti,
 diari, etichette giorni, configurazione **e BDA**. Puoi avere **più progetti** e passare dall'uno
-all'altro.
+all'altro. (I vecchi file `.json.gz`/`.json` si aprono ancora senza problemi.)
 
 - **Nuovo progetto vuoto** (Ctrl/⌘+N): parte da zero (dovrai caricare la BDA e gli utenti).
 - **Apri progetto…** (Ctrl/⌘+O): apre un file di progetto (sostituisce ciò che è caricato).
@@ -221,7 +221,7 @@ Salva/ripristina solo le **preferenze** (cutoff, formule, percentuali, valori sp
 in un file `.json` leggero. Utile per applicare la **stessa configurazione** a più progetti.
 
 ### Condividere/unire utenti (File → Esporta progetto (utenti selezionati) / Unisci utenti da progetto)
-- **Esporta progetto (utenti selezionati)**: esporta un file `.json.gz` **leggero** con i soli
+- **Esporta progetto (utenti selezionati)**: esporta un file `.diario` **leggero** con i soli
   utenti **spuntati** nell'elenco (senza BDA né configurazione).
 - **Unisci utenti da progetto…**: aggiunge al progetto corrente gli utenti di un altro file,
   **senza toccare** BDA e configurazione attuali:
@@ -253,10 +253,10 @@ Genera un file con due fogli:
 
 ## 10. Backup e spostamento dati
 
-- **Backup**: *File → Salva progetto* (file `.json.gz`); conserva/copia quel file. Per
+- **Backup**: *File → Salva progetto* (file `.diario`); conserva/copia quel file. Per
   ripristinare, *File → Apri progetto*.
 - **Nuovo computer**: installa l'app, poi apri il file di progetto (copiato o inviato).
-- Ogni progetto è **autonomo** (include la BDA): per condividerlo basta il singolo file `.json.gz`.
+- Ogni progetto è **autonomo** (include la BDA): per condividerlo basta il singolo file `.diario`.
 
 ---
 

@@ -43,6 +43,7 @@ _MIN_UI_PT, _MAX_UI_PT = 8, 28
 
 from constants import (
     MEALS, MEAL_ORDER, DAYS, APP_TITLE, APP_VERSION, EXPORT_FORMAT, EXPORT_VERSION,
+    PROJECT_EXT, PROJECT_FILTER, PROJECT_OPEN_FILTER,
     ENERGY_LABEL, _MNOVA_COLS,
     _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
     _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
@@ -1852,11 +1853,11 @@ class App(QMainWindow):
         return data
 
     def _write_json(self, path, payload):
-        """Salva il payload come JSON; se il path finisce per .gz, comprime con gzip."""
+        """Salva il payload come JSON; i file di progetto (.diario) e i .gz sono compressi."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             text = json.dumps(payload, ensure_ascii=False, indent=2)
-            if path.lower().endswith(".gz"):
+            if path.lower().endswith((".gz", PROJECT_EXT)):
                 with gzip.open(path, "wt", encoding="utf-8") as f:
                     f.write(text)
             else:
@@ -1944,12 +1945,14 @@ class App(QMainWindow):
         return self._write_project_to(self._project_path)
 
     def _save_project_as(self) -> bool:
-        default = self._project_path or "progetto.json.gz"
+        default = self._project_path or f"progetto{PROJECT_EXT}"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Salva progetto con nome", default,
-            "JSON compresso (*.json.gz);;JSON (*.json)")
+            self, "Salva progetto con nome", default, PROJECT_FILTER)
         if not path:
             return False
+        # Se l'utente non mette un'estensione riconosciuta, usa quella di progetto.
+        if not path.lower().endswith((PROJECT_EXT, ".json.gz", ".json")):
+            path += PROJECT_EXT
         return self._write_project_to(path)
 
     def _maybe_save(self) -> bool:
@@ -1985,8 +1988,7 @@ class App(QMainWindow):
 
     def _open_project_dialog(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Apri progetto", "",
-            "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
+            self, "Apri progetto", "", PROJECT_OPEN_FILTER)
         if path:
             self._open_project(path)
 
@@ -2063,8 +2065,7 @@ class App(QMainWindow):
 
         def do_open():
             path, _ = QFileDialog.getOpenFileName(
-                dlg, "Apri progetto", "",
-                "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
+                dlg, "Apri progetto", "", PROJECT_OPEN_FILTER)
             if path:
                 result["action"], result["path"] = "open", path
                 dlg.accept()
@@ -2113,12 +2114,13 @@ class App(QMainWindow):
                 "Nessun utente selezionato.\nSpunta gli utenti da esportare "
                 "nell'elenco della scheda Diari.")
             return
-        default = f"progetto_{len(codes)}_utenti.json.gz"
+        default = f"progetto_{len(codes)}_utenti{PROJECT_EXT}"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Esporta progetto (utenti selezionati)", default,
-            "JSON compresso (*.json.gz);;JSON (*.json)")
+            self, "Esporta progetto (utenti selezionati)", default, PROJECT_FILTER)
         if not path:
             return
+        if not path.lower().endswith((PROJECT_EXT, ".json.gz", ".json")):
+            path += PROJECT_EXT
         data = self.db.export_users(codes)
         payload = {"format": EXPORT_FORMAT, "kind": "project",
                    "version": EXPORT_VERSION, **data}
@@ -2134,8 +2136,7 @@ class App(QMainWindow):
         """Unisce nel progetto corrente gli utenti di un altro file di progetto.
         Non tocca la BDA né la configurazione attuali (pensato per collaborare)."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Unisci utenti da progetto", "",
-            "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
+            self, "Unisci utenti da progetto", "", PROJECT_OPEN_FILTER)
         if not path:
             return
         data = self._read_export_file(path)

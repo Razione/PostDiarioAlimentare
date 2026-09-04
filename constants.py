@@ -19,6 +19,17 @@ APP_VERSION = "1.2.10"
 EXPORT_FORMAT = "diario-alimentare"
 EXPORT_VERSION = 1
 
+# Estensione dei file di progetto (JSON gzippato con un'estensione dedicata).
+# I vecchi .json.gz / .json restano leggibili (il gzip si riconosce dai magic byte).
+PROJECT_EXT = ".diario"
+PROJECT_FILTER = (
+    f"Progetto Diario Alimentare (*{PROJECT_EXT});;"
+    "JSON compresso (*.json.gz);;JSON (*.json)"
+)
+PROJECT_OPEN_FILTER = (
+    f"Progetti Diario Alimentare (*{PROJECT_EXT} *.json.gz *.json);;Tutti i file (*.*)"
+)
+
 # Struttura del Content Export: offset rispetto alla colonna "Data" di ciascun giorno
 # (meal_name, offset_primo_alimento, numero_max_alimenti)
 _CONTENT_EXPORT_MEALS = [
