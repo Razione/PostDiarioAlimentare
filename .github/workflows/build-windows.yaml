@@ -32,29 +32,29 @@ jobs:
         run: |
           python -m PyInstaller diario_alimentare.spec --clean -y
 
-      - name: Zip app folder
-        id: zip-final
+      - name: Prepare exe (onefile)
+        id: pkg
         shell: pwsh
         run: |
-          if (Test-Path "dist/DiarioAlimentare") {
-            Compress-Archive -Path "dist/DiarioAlimentare/*" -DestinationPath "dist/DiarioAlimentare-Windows.zip" -Force
+          if (Test-Path "dist/DiarioAlimentare.exe") {
+            Copy-Item "dist/DiarioAlimentare.exe" "dist/DiarioAlimentare-Windows.exe" -Force
             "artifact_exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           } else {
             "artifact_exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       - name: Publish to Release (on tag)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.zip-final.outputs.artifact_exists == 'true' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.pkg.outputs.artifact_exists == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DiarioAlimentare-Windows.zip
+          files: dist/DiarioAlimentare-Windows.exe
 
       - name: Upload artifact
         # Non bloccante: se la quota artifact è piena, la Release resta comunque pubblicata.
         continue-on-error: true
-        if: ${{ steps.zip-final.outputs.artifact_exists == 'true' }}
+        if: ${{ steps.pkg.outputs.artifact_exists == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: DiarioAlimentare-Windows
-          path: dist/DiarioAlimentare-Windows.zip
+          path: dist/DiarioAlimentare-Windows.exe
           retention-days: 7

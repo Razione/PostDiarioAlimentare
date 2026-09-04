@@ -118,9 +118,11 @@ class UpdateChecker(QObject):
         hint = _platform_hint()
         if not hint:
             return None
+        # Windows: exe singolo (o zip di ripiego). macOS: zip dell'app.
+        exts = (".exe", ".zip") if hint == "windows" else (".zip",)
         for a in assets:
             name = (a.get("name") or "").lower()
-            if hint in name and name.endswith(".zip"):
+            if hint in name and name.endswith(exts):
                 return a
         return None
 
@@ -177,14 +179,18 @@ class UpdateChecker(QObject):
         finally:
             reply.deleteLater()
 
+        if dest.suffix.lower() == ".exe":
+            info = ("Chiudi questa app e avvia il file scaricato per usare la nuova "
+                    "versione (puoi sostituire il vecchio .exe con questo). "
+                    "I tuoi progetti non vengono toccati.")
+        else:
+            info = ("Chiudi l'app, estrai lo zip e sostituisci la versione attuale "
+                    "(vedi «Aggiornare l'app» nella guida). I tuoi progetti non vengono toccati.")
         msg = QMessageBox(self._parent)
         msg.setWindowTitle("Download completato")
         msg.setIcon(QMessageBox.Icon.Information)
         msg.setText(f"Scaricato in:\n{dest}")
-        msg.setInformativeText(
-            "Chiudi l'app, estrai lo zip e sostituisci la versione attuale "
-            "(vedi «Aggiornare l'app» nella guida). I tuoi dati non verranno persi."
-        )
+        msg.setInformativeText(info)
         open_btn = msg.addButton("Apri cartella", QMessageBox.ButtonRole.AcceptRole)
         msg.addButton("Chiudi", QMessageBox.ButtonRole.RejectRole)
         msg.exec()

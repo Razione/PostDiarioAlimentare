@@ -1,6 +1,6 @@
 # Analisi Diari Alimentari — Guida utente
 
-Versione applicazione: **1.2.11**
+Versione applicazione: **1.2.12**
 
 Applicazione desktop (Windows e macOS) per analizzare diari alimentari su **4 giorni**:
 si associa ogni alimento del diario a una voce della **Banca Dati di composizione
@@ -11,8 +11,11 @@ inclusa la classificazione **NOVA / mNOVA** del grado di processazione.
 
 ## 1. Installazione e primo avvio
 
-1. Scarica lo zip per il tuo sistema dalla pagina **Releases**:
-   - Windows → `DiarioAlimentare-Windows.zip` → estrai ed esegui `DiarioAlimentare.exe`
+1. Scarica dalla pagina **Releases**:
+   - Windows → `DiarioAlimentare-Windows.exe` (**file unico**) → eseguilo direttamente. Se
+     compare **SmartScreen** («Windows ha protetto il PC»), clicca **Ulteriori informazioni →
+     Esegui comunque** (l'app non è firmata). Il primo avvio è un po' più lento perché l'exe
+     si prepara in memoria.
    - macOS → `DiarioAlimentare-macOS.zip` → estrai e apri `DiarioAlimentare.app`
 2. **macOS**: se compare l'avviso di sicurezza, fai **clic destro sull'app → Apri** la prima volta.
 3. A ogni avvio l'app parte **pulita** e mostra una finestra iniziale: **Apri progetto…**,
@@ -45,10 +48,10 @@ confrontala con quella più recente sulla pagina Releases.
 > scarichi lo zip giusto; poi segui i passi qui sotto per sostituire l'app.
 
 **Windows**
-1. Scarica il nuovo `DiarioAlimentare-Windows.zip` dalla pagina Releases.
+1. Scarica il nuovo `DiarioAlimentare-Windows.exe` dalla pagina Releases.
 2. **Chiudi** l'app se è aperta.
-3. Estrai lo zip e **sostituisci** la vecchia cartella (o `DiarioAlimentare.exe`) con la nuova.
-4. Riavvia `DiarioAlimentare.exe`: ritrovi tutti i tuoi dati.
+3. **Sostituisci** il vecchio `.exe` con quello nuovo (o tienilo dove preferisci) ed eseguilo.
+   Non serve estrarre nulla: è un file unico.
 
 **macOS**
 1. Scarica il nuovo `DiarioAlimentare-macOS.zip`.

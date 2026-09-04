@@ -47,24 +47,50 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='DiarioAlimentare',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=not _is_mac,        # UPX corrompe i binari macOS
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=_icon,
-)
+if _is_mac:
+    # macOS: exe "leggero" (binari nella BUNDLE). Niente UPX (corrompe i binari mac).
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='DiarioAlimentare',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=_icon,
+    )
+else:
+    # Windows: onefile → un unico DiarioAlimentare.exe autoconsistente.
+    # UPX disattivato per ridurre i falsi positivi antivirus sull'exe singolo.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='DiarioAlimentare',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=_icon,
+    )
 
 if _is_mac:
     app = BUNDLE(
@@ -86,14 +112,4 @@ if _is_mac:
             'NSHighResolutionCapable': True,
         },
     )
-else:
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        strip=False,
-        upx=True,
-        upx_exclude=[],
-        name='DiarioAlimentare',
-    )
+# Windows: nessun COLLECT — l'exe onefile qui sopra è già l'artefatto finale.
