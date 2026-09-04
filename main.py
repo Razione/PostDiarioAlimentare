@@ -1115,6 +1115,14 @@ class DiaryTab(QWidget):
             else:
                 self.current_user = None
         self.user_list.blockSignals(False)
+        # Se non c'è più un utente selezionato (es. «Nuovo progetto vuoto» o
+        # utente eliminato), svuota la griglia dei giorni e il riepilogo.
+        if not self.current_user:
+            for frm in self.day_frames:
+                frm.load_user(None)
+            self.nutri_frame.load_user(None)
+            for d in DAYS:
+                self.day_nb.setTabText(d - 1, f"  Giorno {d}  ")
         self._filter_users(self.search_user.text())
 
     def _update_user_color(self):
