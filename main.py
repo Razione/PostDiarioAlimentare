@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QHeaderView, QAbstractItemView, QStyledItemDelegate,
     QListWidgetItem, QProgressDialog, QDialogButtonBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSettings, QTimer
 from PyQt6.QtGui import QColor, QBrush, QFont, QAction, QIcon, QKeySequence
 
 from database import Database
@@ -1552,14 +1552,21 @@ class App(QMainWindow):
         self.setMinimumSize(850, 520)
 
         self.db = Database()
+        self._settings = QSettings("DiarioAlimentare", "DiarioAlimentare")
         self._updater = UpdateChecker(self)
+        self._project_path = None     # file del progetto aperto (None = nuovo/non salvato)
+        self._dirty = False           # modifiche non salvate
         self._load_font_prefs()
         self._apply_interface_font()     # font interfaccia (globale) prima di costruire
         self._build_menu()
         self._build_ui()
         self._apply_table_font()         # font tabelle dati (dopo aver creato le viste)
+        self.db.set_change_listener(self._mark_dirty)
         self.diary_tab.refresh_users()
+        self._update_title()
         self._updater.check(silent=True)  # controllo aggiornamenti non invasivo all'avvio
+        # All'avvio parti "pulito": chiedi quale progetto aprire (a finestra mostrata).
+        QTimer.singleShot(0, self._startup_flow)
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -1567,6 +1574,24 @@ class App(QMainWindow):
 
         file_m = mb.addMenu("File")
         assert file_m is not None
+        act_new = QAction("Nuovo progetto vuoto", self)
+        act_new.setShortcut(QKeySequence.StandardKey.New)
+        act_new.triggered.connect(self._new_project)
+        file_m.addAction(act_new)
+        act_open = QAction("Apri progetto…", self)
+        act_open.setShortcut(QKeySequence.StandardKey.Open)
+        act_open.triggered.connect(self._open_project_dialog)
+        file_m.addAction(act_open)
+        act_save = QAction("Salva progetto", self)
+        act_save.setShortcut(QKeySequence.StandardKey.Save)
+        act_save.triggered.connect(self._save_project)
+        file_m.addAction(act_save)
+        act_save_as = QAction("Salva progetto con nome…", self)
+        act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
+        act_save_as.triggered.connect(self._save_project_as)
+        file_m.addAction(act_save_as)
+        file_m.addSeparator()
+
         act_bda = QAction("Carica BDA da Excel", self)
         act_bda.triggered.connect(lambda: (self.nb.setCurrentWidget(self.bda_tab), self.bda_tab._load_bda()))
         file_m.addAction(act_bda)
@@ -1580,18 +1605,16 @@ class App(QMainWindow):
         file_m.addAction(act_imp_cfg)
         file_m.addSeparator()
 
-        act_exp_prj = QAction("Esporta progetto…", self)
-        act_exp_prj.triggered.connect(self._export_project)
-        file_m.addAction(act_exp_prj)
         act_exp_sel = QAction("Esporta progetto (utenti selezionati)…", self)
         act_exp_sel.triggered.connect(self._export_selected_project)
         file_m.addAction(act_exp_sel)
-        act_imp_prj = QAction("Importa progetto…", self)
-        act_imp_prj.triggered.connect(self._import_project)
-        file_m.addAction(act_imp_prj)
+        act_merge = QAction("Unisci utenti da progetto…", self)
+        act_merge.triggered.connect(self._merge_project_dialog)
+        file_m.addAction(act_merge)
         file_m.addSeparator()
 
         act_exit = QAction("Esci", self)
+        act_exit.setShortcut(QKeySequence.StandardKey.Quit)
         act_exit.triggered.connect(self.close)
         file_m.addAction(act_exit)
 
@@ -1653,7 +1676,9 @@ class App(QMainWindow):
         return max(_MIN_UI_PT, min(_MAX_UI_PT, int(pt)))
 
     def _read_pt(self, key, default):
-        raw = self.db.get_setting(key)
+        # Le dimensioni del testo sono preferenze dell'app (QSettings), non del
+        # progetto: non vanno perse quando si apre/azzera un progetto.
+        raw = self._settings.value(key)
         try:
             return self._clamp_pt(raw) if raw else default
         except (TypeError, ValueError):
@@ -1709,14 +1734,14 @@ class App(QMainWindow):
         self._apply_table_font()       # ripristina la misura tabelle dopo la propagazione
         self._reload_current_user()
         if persist:
-            self.db.set_setting("ui_font_pt", self._ui_font_pt)
+            self._settings.setValue("ui_font_pt", self._ui_font_pt)
 
     def _set_table_font_pt(self, pt, persist=True):
         self._table_font_pt = self._clamp_pt(pt)
         self._apply_table_font()
         self._reload_current_user()
         if persist:
-            self.db.set_setting("table_font_pt", self._table_font_pt)
+            self._settings.setValue("table_font_pt", self._table_font_pt)
 
     def _change_text_size(self, delta):
         self._set_ui_font_pt(self._ui_font_pt + delta)
@@ -1876,12 +1901,26 @@ class App(QMainWindow):
         QMessageBox.information(self, "Configurazione importata",
                                 f"{len(settings)} preferenze applicate.")
 
-    def _export_project(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Esporta progetto", "progetto.json.gz",
-            "JSON compresso (*.json.gz);;JSON (*.json)")
-        if not path:
-            return
+    # ── Gestione progetto (nuovo / apri / salva) ──────────────────────────
+    def _mark_dirty(self):
+        if not self._dirty:
+            self._dirty = True
+            self._update_title()
+
+    def _update_title(self):
+        name = os.path.basename(self._project_path) if self._project_path else "Nuovo progetto"
+        star = " *" if self._dirty else ""
+        self.setWindowTitle(f"{APP_TITLE} — {name}{star}")
+
+    def _recent_projects(self) -> list:
+        return [p for p in (self._settings.value("recent_projects") or []) if os.path.exists(p)]
+
+    def _add_recent(self, path):
+        recent = [path] + [p for p in self._recent_projects() if p != path]
+        self._settings.setValue("recent_projects", recent[:8])
+
+    def _write_project_to(self, path) -> bool:
+        """Salva l'intero progetto (utenti, diari, BDA, configurazione) nel file."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             data = self.db.export_data(include_work=True, include_settings=True,
@@ -1890,12 +1929,181 @@ class App(QMainWindow):
             QApplication.restoreOverrideCursor()
         payload = {"format": EXPORT_FORMAT, "kind": "project",
                    "version": EXPORT_VERSION, **data}
-        if self._write_json(path, payload):
-            QMessageBox.information(
-                self, "Progetto esportato",
-                f"Esportati {len(data.get('users', [])):,} utenti, "
-                f"{len(data.get('diary_entries', [])):,} voci di diario e "
-                f"{len(data.get('bda_foods', [])):,} alimenti BDA in:\n{path}")
+        if not self._write_json(path, payload):
+            return False
+        self._project_path = path
+        self._dirty = False
+        self._add_recent(path)
+        self._update_title()
+        return True
+
+    def _save_project(self) -> bool:
+        """Salva sul file corrente; se non c'è, chiede dove salvarlo."""
+        if not self._project_path:
+            return self._save_project_as()
+        return self._write_project_to(self._project_path)
+
+    def _save_project_as(self) -> bool:
+        default = self._project_path or "progetto.json.gz"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Salva progetto con nome", default,
+            "JSON compresso (*.json.gz);;JSON (*.json)")
+        if not path:
+            return False
+        return self._write_project_to(path)
+
+    def _maybe_save(self) -> bool:
+        """Se ci sono modifiche non salvate, chiede cosa fare.
+        Ritorna True se si può procedere (salvato o scartato), False se annullato."""
+        if not self._dirty:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Progetto non salvato")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText("Ci sono modifiche non salvate nel progetto.")
+        box.setInformativeText("Vuoi salvarle prima di continuare?")
+        btn_save = box.addButton("Salva", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Non salvare", QMessageBox.ButtonRole.DestructiveRole)
+        btn_cancel = box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(btn_save)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_cancel:
+            return False
+        if clicked is btn_save:
+            return self._save_project()   # se il salvataggio fallisce/annulla → non procedere
+        return True                        # «Non salvare»
+
+    def _new_project(self):
+        if not self._maybe_save():
+            return
+        self.db.clear_all()
+        self._project_path = None
+        self._dirty = False
+        self._refresh_all()
+        self._update_title()
+
+    def _open_project_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Apri progetto", "",
+            "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
+        if path:
+            self._open_project(path)
+
+    def _open_project(self, path) -> bool:
+        if not self._maybe_save():
+            return False
+        data = self._read_export_file(path)
+        if data is None:
+            return False
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.db.clear_all()
+            self.db.replace_project(data)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._project_path = path
+        self._dirty = False
+        self._add_recent(path)
+        self._refresh_all()
+        self._update_title()
+        return True
+
+    def _startup_flow(self):
+        """All'avvio: recupera eventuale lavoro non salvato, poi chiedi il progetto."""
+        # Lavoro rimasto nel DB (crash o primo avvio della nuova versione).
+        if self.db.has_data():
+            box = QMessageBox(self)
+            box.setWindowTitle("Lavoro non salvato")
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setText("È stato trovato del lavoro non salvato dalla sessione precedente.")
+            box.setInformativeText("Vuoi salvarlo come progetto?")
+            btn_save = box.addButton("Salva come progetto…", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Scarta", QMessageBox.ButtonRole.DestructiveRole)
+            box.setDefaultButton(btn_save)
+            box.exec()
+            if box.clickedButton() is btn_save:
+                self._dirty = True
+                if self._save_project_as():   # salvato → continua a lavorarci
+                    self._refresh_all()
+                    return
+            self.db.clear_all()
+            self._dirty = False
+            self._refresh_all()
+            self._update_title()
+        self._choose_project_dialog()
+
+    def _choose_project_dialog(self):
+        """Finestra iniziale: apri un progetto, aprine uno recente o inizia da capo."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Analisi Diari Alimentari")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("<b>Benvenuto.</b> Apri un progetto o inizia da capo."))
+
+        recent = self._recent_projects()
+        rec_list = None
+        if recent:
+            lay.addWidget(QLabel("Progetti recenti (doppio clic per aprire):"))
+            rec_list = QListWidget()
+            for p in recent:
+                it = QListWidgetItem(os.path.basename(p))
+                it.setData(Qt.ItemDataRole.UserRole, p)
+                it.setToolTip(p)
+                rec_list.addItem(it)
+            lay.addWidget(rec_list)
+
+        row = QHBoxLayout()
+        btn_open = QPushButton("Apri progetto…")
+        btn_new = QPushButton("Nuovo progetto vuoto")
+        row.addWidget(btn_open)
+        row.addWidget(btn_new)
+        lay.addLayout(row)
+
+        result = {"action": "new", "path": None}   # chiusura con X → nuovo progetto vuoto
+
+        def do_open():
+            path, _ = QFileDialog.getOpenFileName(
+                dlg, "Apri progetto", "",
+                "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
+            if path:
+                result["action"], result["path"] = "open", path
+                dlg.accept()
+
+        def do_new():
+            result["action"], result["path"] = "new", None
+            dlg.accept()
+
+        def do_recent(item):
+            result["action"], result["path"] = "open", item.data(Qt.ItemDataRole.UserRole)
+            dlg.accept()
+
+        btn_open.clicked.connect(do_open)
+        btn_new.clicked.connect(do_new)
+        if rec_list is not None:
+            rec_list.itemDoubleClicked.connect(do_recent)
+        dlg.exec()
+
+        action, path = result["action"], result["path"]
+        if action == "open" and path:
+            if not self._open_project(path):
+                self._new_project_silent()
+        else:
+            self._new_project_silent()
+
+    def _new_project_silent(self):
+        """Nuovo progetto senza chiedere di salvare (usato all'avvio, DB già pulito)."""
+        self.db.clear_all()
+        self._project_path = None
+        self._dirty = False
+        self._refresh_all()
+        self._update_title()
+
+    def closeEvent(self, event):
+        if self._maybe_save():
+            self.db.clear_all()   # lascia il DB pulito per il prossimo avvio
+            event.accept()
+        else:
+            event.ignore()
 
     def _export_selected_project(self):
         codes = sorted(self.diary_tab._checked_users)
@@ -1920,73 +2128,42 @@ class App(QMainWindow):
                 f"Esportati {len(data['users'])} utenti selezionati e "
                 f"{len(data['diary_entries'])} voci di diario in:\n{path}\n\n"
                 "File 'leggero' (senza BDA né configurazione), pensato per l'unione "
-                "sull'altro computer con «Importa progetto → Unisci».")
+                "sull'altro computer con «Unisci utenti da progetto».")
 
-    def _import_project(self):
+    def _merge_project_dialog(self):
+        """Unisce nel progetto corrente gli utenti di un altro file di progetto.
+        Non tocca la BDA né la configurazione attuali (pensato per collaborare)."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importa progetto", "",
-            "JSON (*.json *.json.gz);;Tutti i file (*.*)")
+            self, "Unisci utenti da progetto", "",
+            "Progetti (*.json *.json.gz);;Tutti i file (*.*)")
         if not path:
             return
         data = self._read_export_file(path)
         if data is None:
             return
 
-        n_users = len(data.get("users", []))
-        n_entries = len(data.get("diary_entries", []))
-        has_bda = "bda_foods" in data
-        has_cfg = "settings" in data
-        parts = [f"{n_users} utenti", f"{n_entries} voci di diario"]
-        if has_bda:
-            parts.append(f"{len(data['bda_foods']):,} alimenti BDA")
-        if has_cfg:
-            parts.append("la configurazione")
+        analysis = self.db.merge_analysis(data)
+        overwrite = []
+        if analysis["conflict"]:
+            cdlg = MergeConflictsDialog(
+                self, analysis["conflict"],
+                n_new=len(analysis["new"]),
+                n_auto=len(analysis["auto_update"]),
+            )
+            if cdlg.exec() != QDialog.DialogCode.Accepted:
+                return  # annullato → nessuna modifica
+            overwrite = cdlg.selected
 
-        box = QMessageBox(self)
-        box.setWindowTitle("Importa progetto")
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setText("Il file contiene " + ", ".join(parts) + ".")
-        box.setInformativeText(
-            "<b>Sostituisci tutto</b>: rimpiazza i dati attuali con quelli del file"
-            + (" (BDA e configurazione comprese)." if has_bda or has_cfg else ".")
-            + "<br><b>Unisci</b>: aggiunge i nuovi utenti; quelli già presenti senza "
-            "associazioni vengono aggiornati, per quelli già associati chiede conferma. "
-            "Non tocca BDA né configurazione."
-        )
-        btn_replace = box.addButton("Sostituisci tutto", QMessageBox.ButtonRole.DestructiveRole)
-        btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-
-        if clicked is btn_replace:
-            self.db.replace_project(data)
-            self._refresh_all()
-            QMessageBox.information(self, "Progetto importato",
-                                    "I dati attuali sono stati sostituiti.")
-        elif clicked is btn_merge:
-            analysis = self.db.merge_analysis(data)
-            overwrite = []
-            if analysis["conflict"]:
-                cdlg = MergeConflictsDialog(
-                    self, analysis["conflict"],
-                    n_new=len(analysis["new"]),
-                    n_auto=len(analysis["auto_update"]),
-                )
-                if cdlg.exec() != QDialog.DialogCode.Accepted:
-                    return  # annullato → nessuna modifica
-                overwrite = cdlg.selected
-
-            rep = self.db.apply_merge_project(data, overwrite)
-            self._refresh_all()
-            msg = (f"Aggiunti: {len(rep['added'])}\n"
-                   f"Aggiornati: {len(rep['updated'])}\n"
-                   f"Mantenuti invariati: {len(rep['kept'])}")
-            if rep["kept"]:
-                msg += "\n\nMantenuti (non sovrascritti):\n  " + "\n  ".join(rep["kept"])
-            msg += ("\n\nSe gli alimenti non risultano associati, usa "
-                    "«Verifica / riassegna BDA».")
-            QMessageBox.information(self, "Progetto unito", msg)
+        rep = self.db.apply_merge_project(data, overwrite)
+        self._refresh_all()
+        msg = (f"Aggiunti: {len(rep['added'])}\n"
+               f"Aggiornati: {len(rep['updated'])}\n"
+               f"Mantenuti invariati: {len(rep['kept'])}")
+        if rep["kept"]:
+            msg += "\n\nMantenuti (non sovrascritti):\n  " + "\n  ".join(rep["kept"])
+        msg += ("\n\nSe gli alimenti non risultano associati, usa "
+                "«Verifica / riassegna BDA».")
+        QMessageBox.information(self, "Progetto unito", msg)
 
     def _show_guide(self):
         path = resource_path("MANUALE.md")

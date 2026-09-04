@@ -42,7 +42,33 @@ class Database:
     def __init__(self, db_path=DB_FILE):
         self.db_path = db_path
         self._bda_columns_cache = None
+        self._change_cb = None
         self._init_schema()
+
+    # ── Notifica modifiche (per il flag «progetto da salvare») ────────────
+    def set_change_listener(self, cb):
+        """Registra una callback chiamata a ogni modifica dei dati del progetto."""
+        self._change_cb = cb
+
+    def _touch(self):
+        if self._change_cb:
+            self._change_cb()
+
+    def has_data(self) -> bool:
+        """True se il progetto contiene qualcosa (utenti, voci o BDA)."""
+        with self._conn() as conn:
+            for t in ("users", "diary_entries", "bda_foods"):
+                if conn.execute(f"SELECT 1 FROM {t} LIMIT 1").fetchone():
+                    return True
+        return False
+
+    def clear_all(self):
+        """Svuota completamente il progetto: utenti, diari, BDA e impostazioni."""
+        with self._conn() as conn:
+            for t in ("diary_entries", "diary_day_meta", "users",
+                      "bda_foods", "bda_categories", "settings"):
+                conn.execute(f"DELETE FROM {t}")
+        self._bda_columns_cache = None
 
     @contextlib.contextmanager
     def _conn(self):
@@ -200,6 +226,7 @@ class Database:
                 "INSERT INTO bda_foods (id, name, data) VALUES (?, ?, ?)", rows
             )
         self._bda_columns_cache = None
+        self._touch()
 
     def search_bda(self, query="", limit=300):
         with self._conn() as conn:
@@ -256,6 +283,7 @@ class Database:
                   r.get("macro_code"), r.get("macro_name_it"), r.get("macro_name_en"))
                  for r in records],
             )
+        self._touch()
 
     def get_categories_map(self):
         """Ritorna {code: {name_it, name_en, macro_code, macro_name_it, ...}}."""
@@ -275,6 +303,7 @@ class Database:
                 conn.execute(
                     "INSERT INTO users (code, notes) VALUES (?,?)", (code.strip(), notes)
                 )
+            self._touch()
             return True
         except sqlite3.IntegrityError:
             return False
@@ -282,11 +311,13 @@ class Database:
     def update_user_notes(self, code, notes):
         with self._conn() as conn:
             conn.execute("UPDATE users SET notes=? WHERE code=?", (notes, code))
+        self._touch()
 
     def delete_user(self, code):
         with self._conn() as conn:
             conn.execute("DELETE FROM diary_entries WHERE user_code=?", (code,))
             conn.execute("DELETE FROM users WHERE code=?", (code,))
+        self._touch()
 
     def get_users(self):
         with self._conn() as conn:
@@ -304,6 +335,7 @@ class Database:
                 "VALUES (?,?,?,?,?,?,?,?,?)",
                 (user_code, int(day), meal, food_name, qty, notes, ora, luogo, qty_raw),
             )
+        self._touch()
 
     def get_entries(self, user_code, day=None):
         sql = """
@@ -329,6 +361,7 @@ class Database:
                 "DELETE FROM diary_entries WHERE user_code=? AND day=?",
                 (user_code, int(day)),
             )
+        self._touch()
 
     def associate_bda(self, entry_id, bda_food_id):
         """Associa una voce a un alimento BDA, salvando anche il Codice Alimento
@@ -341,6 +374,7 @@ class Database:
                 "UPDATE diary_entries SET bda_food_id=?, bda_code=?, bda_hash=? WHERE id=?",
                 (bda_food_id, code, h, entry_id),
             )
+        self._touch()
 
     def get_bda_code_index(self):
         """Ritorna {Codice Alimento: id} per gli alimenti BDA che hanno un codice."""
@@ -399,6 +433,7 @@ class Database:
                 with self._conn() as conn:
                     conn.execute("UPDATE diary_entries SET bda_hash=? WHERE id=?",
                                  (new_hash, e["id"]))
+                self._touch()
                 report["changed"].append(label)
             else:
                 report["ok"] += 1
@@ -413,10 +448,12 @@ class Database:
         vals = [v for _, v in fields] + [entry_id]
         with self._conn() as conn:
             conn.execute(f"UPDATE diary_entries SET {set_clause} WHERE id=?", vals)
+        self._touch()
 
     def delete_entry(self, entry_id):
         with self._conn() as conn:
             conn.execute("DELETE FROM diary_entries WHERE id=?", (entry_id,))
+        self._touch()
 
     def count_entries(self, user_code) -> tuple[int, int]:
         # 'assoc' conta solo le associazioni risolvibili (alimento BDA esistente),
@@ -483,6 +520,7 @@ class Database:
                 "INSERT OR REPLACE INTO diary_day_meta (user_code, day, date_label) VALUES (?,?,?)",
                 (user_code, int(day), date_label),
             )
+        self._touch()
 
     def get_day_meta(self, user_code, day):
         with self._conn() as conn:
@@ -497,6 +535,7 @@ class Database:
     def set_setting(self, key, value):
         with self._conn() as conn:
             conn.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, str(value)))
+        self._touch()
 
     def get_setting(self, key, default=None):
         with self._conn() as conn:
@@ -577,6 +616,7 @@ class Database:
                     "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)",
                     (k, None if v is None else str(v)),
                 )
+        self._touch()
 
     def replace_project(self, data: dict):
         """Sostituisce col contenuto del file ciò che il file contiene.
@@ -695,4 +735,5 @@ class Database:
                     row = {k: v for k, v in e.items() if k != "id"}
                     row["user_code"] = code
                     self._insert_rows(conn, "diary_entries", [row])
+        self._touch()
         return report

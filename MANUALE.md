@@ -15,24 +15,34 @@ inclusa la classificazione **NOVA / mNOVA** del grado di processazione.
    - Windows → `DiarioAlimentare-Windows.zip` → estrai ed esegui `DiarioAlimentare.exe`
    - macOS → `DiarioAlimentare-macOS.zip` → estrai e apri `DiarioAlimentare.app`
 2. **macOS**: se compare l'avviso di sicurezza, fai **clic destro sull'app → Apri** la prima volta.
-3. Al primo avvio l'app è **vuota**: dovrai caricare la BDA e creare/importare gli utenti.
+3. A ogni avvio l'app parte **pulita** e mostra una finestra iniziale: **Apri progetto…**,
+   **Nuovo progetto vuoto** oppure un progetto tra quelli **recenti**. Con «Nuovo progetto vuoto»
+   dovrai caricare la BDA e creare/importare gli utenti (vedi §9, «Progetti»).
 
 ### Dove vengono salvati i dati
-Tutti i dati (utenti, diari, BDA, preferenze) stanno in un singolo database, **per utente del computer**:
+Il tuo lavoro vive in **file di progetto** (`.json.gz`) che salvi dove preferisci: un progetto
+contiene utenti, diari, BDA e configurazione. Puoi avere **più progetti** e aprire quello che
+ti serve. L'app usa internamente un database temporaneo che viene **azzerato alla chiusura**,
+quindi ciò che conta è **salvare il progetto** (le preferenze dell'app, come la dimensione del
+testo, restano invece salvate a parte e non si perdono).
 
-| Sistema | Percorso |
-|---------|----------|
+| Sistema | Workspace temporaneo (interno) |
+|---------|--------------------------------|
 | Windows | `%APPDATA%\DiarioAlimentare\food_diary.db` |
 | macOS   | `~/Library/Application Support/DiarioAlimentare/food_diary.db` |
 
-I dati **persistono** tra un aggiornamento dell'app e l'altro. Per spostarli su un altro
-computer usa **File → Esporta/Importa progetto** (vedi §9).
+Poiché i dati stanno nei file di progetto, per spostarli su un altro computer basta **copiare il
+file del progetto** (o usare **File → Salva progetto**, vedi §9).
 
 ### Aggiornare l'app
 Quando esce una nuova versione (pagina **Releases**), l'aggiornamento è manuale ma semplice e
-**non cancella i dati**: utenti, diari, BDA e preferenze restano nel database indicato sopra.
-La versione installata la trovi in **Aiuto → Informazioni** (ed è mostrata in cima a questa
-guida, **Aiuto → Guida / Manuale**); confrontala con quella più recente sulla pagina Releases.
+**non tocca i tuoi progetti** (sono file separati). La versione installata la trovi in
+**Aiuto → Informazioni** (ed è mostrata in cima a questa guida, **Aiuto → Guida / Manuale**);
+confrontala con quella più recente sulla pagina Releases.
+
+> **Controllo aggiornamenti in-app**: all'avvio l'app verifica se c'è una versione più recente e,
+> in caso, te lo segnala; puoi anche farlo a mano da **Aiuto → Controlla aggiornamenti…**. Da lì
+> scarichi lo zip giusto; poi segui i passi qui sotto per sostituire l'app.
 
 **Windows**
 1. Scarica il nuovo `DiarioAlimentare-Windows.zip` dalla pagina Releases.
@@ -47,8 +57,8 @@ guida, **Aiuto → Guida / Manuale**); confrontala con quella più recente sulla
    *Applicazioni*), sostituendola.
 4. Al primo avvio, se compare l'avviso di sicurezza fai **clic destro sull'app → Apri**.
 
-Se preferisci non sovrascrivere, prima di aggiornare puoi fare un backup con
-**File → Esporta progetto** (vedi §9).
+I tuoi progetti sono file separati, quindi l'aggiornamento non li tocca. Per sicurezza puoi
+comunque salvarli prima con **File → Salva progetto** (vedi §9).
 
 ---
 
@@ -190,18 +200,31 @@ Scheda all'interno dei giorni. Mostra, per **ogni giorno** e in **media (4 giorn
 
 ---
 
-## 9. Import / Export
+## 9. Progetti, Import / Export
+
+### Progetti (File → Nuovo / Apri / Salva)
+Il lavoro vive in **file di progetto** (`.json.gz`, compressi) che contengono **tutto**: utenti,
+diari, etichette giorni, configurazione **e BDA**. Puoi avere **più progetti** e passare dall'uno
+all'altro.
+
+- **Nuovo progetto vuoto** (Ctrl/⌘+N): parte da zero (dovrai caricare la BDA e gli utenti).
+- **Apri progetto…** (Ctrl/⌘+O): apre un file di progetto (sostituisce ciò che è caricato).
+- **Salva progetto** (Ctrl/⌘+S): salva sul file aperto; se non ne hai ancora uno, chiede dove.
+- **Salva progetto con nome…** (Ctrl/⌘+Maiusc+S): salva una copia in un nuovo file.
+
+All'avvio l'app parte pulita e chiede quale progetto aprire (con l'elenco dei **recenti**).
+Se ci sono **modifiche non salvate**, il titolo mostra un `*` e, prima di **chiudere** o di
+**aprire un altro progetto**, l'app chiede se salvare (Salva / Non salvare / Annulla).
 
 ### Configurazione (File → Esporta/Importa configurazione)
 Salva/ripristina solo le **preferenze** (cutoff, formule, percentuali, valori speciali, bevande)
-in un file `.json` leggero.
+in un file `.json` leggero. Utile per applicare la **stessa configurazione** a più progetti.
 
-### Progetto (File → Esporta/Importa progetto)
-Salva/ripristina **tutto** il lavoro (utenti, diari, etichette giorni, configurazione **e BDA**)
-in un unico file `.json.gz` (compresso). All'**import** scegli:
-
-- **Sostituisci tutto**: rimpiazza i dati attuali con quelli del file (BDA e config comprese).
-- **Unisci**:
+### Condividere/unire utenti (File → Esporta progetto (utenti selezionati) / Unisci utenti da progetto)
+- **Esporta progetto (utenti selezionati)**: esporta un file `.json.gz` **leggero** con i soli
+  utenti **spuntati** nell'elenco (senza BDA né configurazione).
+- **Unisci utenti da progetto…**: aggiunge al progetto corrente gli utenti di un altro file,
+  **senza toccare** BDA e configurazione attuali:
   - utenti **nuovi** → aggiunti;
   - utenti già presenti **senza associazioni** → aggiornati automaticamente col file;
   - utenti già presenti **con associazioni** → ti viene chiesto, in un elenco con caselle,
@@ -209,10 +232,6 @@ in un unico file `.json.gz` (compresso). All'**import** scegli:
 
 > Suggerimento: dopo un'unione, se gli alimenti non risultano associati usa
 > **Verifica / riassegna BDA**.
-
-**Esporta progetto (utenti selezionati)**: esporta un file `.json.gz` **leggero** con i
-soli utenti **spuntati** nell'elenco (senza BDA né configurazione). Ideale per il lavoro
-condiviso: si mandano «solo i propri» utenti e l'altro li integra con **Importa progetto → Unisci**.
 
 ### Lavoro condiviso a due
 Per dividere il lavoro su due computer senza confusione:
@@ -222,7 +241,7 @@ Per dividere il lavoro su due computer senza confusione:
 2. **Dividete i soggetti** in due gruppi disgiunti: lo *stesso utente non si tocca su entrambi i PC*.
 3. Ognuno lavora sui propri utenti (lo **stato a colori** e il **filtro** aiutano a seguire i progressi).
 4. Alla fine, ognuno fa **Esporta progetto (utenti selezionati)** dei propri e lo invia; l'altro
-   fa **Importa progetto → Unisci**: i nuovi utenti vengono aggiunti senza toccare il lavoro esistente.
+   fa **Unisci utenti da progetto**: i nuovi utenti vengono aggiunti senza toccare il lavoro esistente.
 
 ### Export Excel del riepilogo (Esporta selezionati)
 Genera un file con due fogli:
@@ -234,18 +253,23 @@ Genera un file con due fogli:
 
 ## 10. Backup e spostamento dati
 
-- **Backup**: *File → Esporta progetto* (file `.json.gz`); per ripristinare, *Importa progetto →
-  Sostituisci tutto*.
-- **Nuovo computer**: installa l'app, poi importa il progetto esportato.
-- Il database vero e proprio è il file `food_diary.db` indicato in §1 (puoi anche copiarlo a mano).
+- **Backup**: *File → Salva progetto* (file `.json.gz`); conserva/copia quel file. Per
+  ripristinare, *File → Apri progetto*.
+- **Nuovo computer**: installa l'app, poi apri il file di progetto (copiato o inviato).
+- Ogni progetto è **autonomo** (include la BDA): per condividerlo basta il singolo file `.json.gz`.
 
 ---
 
 ## 11. Domande frequenti
 
-**L'app si apre con dati già dentro.**
-Sono i *tuoi* dati salvati in precedenza sul computer (vedi §1): è normale. Un computer nuovo
-parte vuoto.
+**All'avvio l'app è vuota / mi chiede quale progetto aprire.**
+È normale: il lavoro sta nei **file di progetto** (§9). Apri un progetto recente, sfoglia con
+**Apri progetto…** oppure inizia con **Nuovo progetto vuoto**.
+
+**Ho chiuso l'app: ho perso il lavoro?**
+Alla chiusura l'app chiede di **salvare** se ci sono modifiche non salvate (titolo con `*`).
+Se scegli «Non salvare» le modifiche vengono scartate. Salva sempre il progetto (Ctrl/⌘+S)
+per conservarlo. In caso di chiusura anomala, al riavvio l'app propone di recuperare il lavoro.
 
 **I valori nell'app e nell'Excel hanno decimali diversi.**
 Regola **Preferenze → Decimali valori…**: vale sia per l'app sia per l'export.
