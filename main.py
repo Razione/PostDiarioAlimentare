@@ -1045,7 +1045,12 @@ class DiaryTab(QWidget):
         self.day_nb.addTab(self.nutri_frame, "  Riepilogo nutrizionale  ")
         self.day_nb.currentChanged.connect(self._on_tab_changed)
 
-        right_layout.addWidget(self.day_nb)
+        # Segnaposto mostrato al posto della griglia quando nessun utente è selezionato.
+        self.no_user_lbl = QLabel("Seleziona un utente dall'elenco per vedere il diario.")
+        self.no_user_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_user_lbl.setStyleSheet("color: gray;")
+        right_layout.addWidget(self.day_nb, 1)
+        right_layout.addWidget(self.no_user_lbl, 1)
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
@@ -1123,7 +1128,13 @@ class DiaryTab(QWidget):
             self.nutri_frame.load_user(None)
             for d in DAYS:
                 self.day_nb.setTabText(d - 1, f"  Giorno {d}  ")
+        self._show_diary(bool(self.current_user))
         self._filter_users(self.search_user.text())
+
+    def _show_diary(self, has_user: bool):
+        """Mostra la griglia dei giorni o il segnaposto «seleziona un utente»."""
+        self.day_nb.setVisible(has_user)
+        self.no_user_lbl.setVisible(not has_user)
 
     def _update_user_color(self):
         """Ricolora l'utente corrente in base allo stato di associazione."""
@@ -1142,6 +1153,7 @@ class DiaryTab(QWidget):
             return
         code = self._users[row]["code"]
         self.current_user = code
+        self._show_diary(True)
         for d, frm in zip(DAYS, self.day_frames):
             frm.load_user(code)
             date_label = self.db.get_day_meta(code, d)[:-9]
