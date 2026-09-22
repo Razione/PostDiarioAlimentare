@@ -134,8 +134,9 @@ Gestione anagrafica dei soggetti e relative note.
 - **Importa Content Export**: importa il file Excel «Content Export» (4 giorni per utente).
   Chiede se **Sostituisci** (rimpiazza il diario degli utenti presenti nel file) o
   **Unisci** (aggiunge i nuovi; aggiorna quelli senza associazioni; per quelli già
-  associati chiede in un elenco quali sovrascrivere). Al termine mostra un riepilogo
-  con l'**elenco dei nuovi diari** aggiunti.
+  associati chiede in un elenco quali sovrascrivere). Già nella finestra di scelta vedi
+  **quanti (e quali) sono i nuovi diari** — l'elenco è in «Mostra dettagli» — così puoi
+  controllarli **prima** di applicare; a fine import c'è comunque il riepilogo.
 - **Seleziona tutti / Deseleziona tutti** e **Esporta selezionati** (export Excel del riepilogo).
 - Pulsante **◀ Nascondi utenti** (in alto a destra): comprime la barra per avere più spazio.
 

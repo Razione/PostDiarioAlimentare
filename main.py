@@ -1513,17 +1513,25 @@ class DiaryTab(QWidget):
             "diary_day_meta": day_meta,
         }
 
+        # Analisi preventiva: quali diari sono nuovi (non presenti in locale).
+        analysis = self.db.merge_analysis(data)
+        new_codes = sorted(analysis["new"])
+
         box = QMessageBox(self)
         box.setWindowTitle("Importa Content Export")
         box.setIcon(QMessageBox.Icon.Question)
         box.setText(f"Il file contiene {len(users_order)} utenti e "
                     f"{len(entries)} voci di diario.")
         box.setInformativeText(
-            "<b>Sostituisci</b>: rimpiazza il diario degli utenti presenti nel file "
+            f"<b>Nuovi diari (non presenti):</b> {len(new_codes)}"
+            + (" — l'elenco è in «Mostra dettagli».<br><br>" if new_codes else ".<br><br>")
+            + "<b>Sostituisci</b>: rimpiazza il diario degli utenti presenti nel file "
             "(gli altri utenti restano invariati).<br>"
             "<b>Unisci</b>: aggiunge i nuovi; quelli già presenti senza associazioni "
             "vengono aggiornati, per quelli già associati chiede conferma."
         )
+        if new_codes:
+            box.setDetailedText("Nuovi diari:\n  " + "\n  ".join(new_codes))
         btn_replace = box.addButton("Sostituisci", QMessageBox.ButtonRole.DestructiveRole)
         btn_merge = box.addButton("Unisci", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
@@ -1533,7 +1541,6 @@ class DiaryTab(QWidget):
         if clicked is btn_replace:
             overwrite = list(users_order)   # sostituisci tutti gli utenti del file
         elif clicked is btn_merge:
-            analysis = self.db.merge_analysis(data)
             overwrite = []
             if analysis["conflict"]:
                 cdlg = MergeConflictsDialog(
