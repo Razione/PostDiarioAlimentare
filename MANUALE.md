@@ -1,6 +1,6 @@
 # Analisi Diari Alimentari — Guida utente
 
-Versione applicazione: **1.2.14**
+Versione applicazione: **1.2.15**
 
 Applicazione desktop (Windows e macOS) per analizzare diari alimentari su **4 giorni**:
 si associa ogni alimento del diario a una voce della **Banca Dati di composizione
