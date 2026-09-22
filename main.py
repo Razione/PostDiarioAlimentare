@@ -1559,6 +1559,8 @@ class DiaryTab(QWidget):
         n_add, n_upd, n_kept = len(rep["added"]), len(rep["updated"]), len(rep["kept"])
         msg = ("Aggiunti: %d\nAggiornati: %d\nMantenuti invariati: %d\n\n"
                "Voci importate: %d" % (n_add, n_upd, n_kept, n_voci))
+        if rep["added"]:
+            msg += "\n\nNuovi diari:\n  " + "\n  ".join(sorted(rep["added"]))
         if rep["kept"]:
             msg += "\n\nMantenuti (non sovrascritti):\n  " + "\n  ".join(rep["kept"])
         QMessageBox.information(self, "Content Export importato", msg)
