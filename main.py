@@ -1153,7 +1153,6 @@ class DiaryTab(QWidget):
             return
         code = self._users[row]["code"]
         self.current_user = code
-        self._show_diary(True)
         for d, frm in zip(DAYS, self.day_frames):
             frm.load_user(code)
             date_label = self.db.get_day_meta(code, d)[:-9]
@@ -1588,9 +1587,11 @@ class App(QMainWindow):
         # finché _startup_flow non lo risolve: così una chiusura non lo cancella.
         self._dirty = self.db.has_data()
         self._update_title()
-        self._updater.check(silent=True)  # controllo aggiornamenti non invasivo all'avvio
         # All'avvio parti "pulito": chiedi quale progetto aprire (a finestra mostrata).
-        QTimer.singleShot(0, self._startup_flow)
+        # Il controllo aggiornamenti parte DOPO (vedi _run_startup): avviarlo qui
+        # faceva arrivare il reply di rete durante i dialoghi modali di avvio, con
+        # crash su macOS (Apple Event di lancio + ripristino finestre).
+        QTimer.singleShot(0, self._run_startup)
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -2033,6 +2034,24 @@ class App(QMainWindow):
         self._refresh_all()
         self._update_title()
         return True
+
+    def _run_startup(self):
+        """Esegue la scelta iniziale del progetto, poi avvia (in ritardo) il
+        controllo aggiornamenti — quando il lancio è concluso e non ci sono più
+        finestre modali di avvio aperte."""
+        try:
+            self._startup_flow()
+        finally:
+            QTimer.singleShot(4000, self._check_updates_startup)
+
+    def _check_updates_startup(self):
+        """Controllo aggiornamenti silenzioso, ma solo a interfaccia libera: se c'è
+        una finestra modale aperta rimanda, per non consegnare segnali di rete in
+        contesti modali annidati (su macOS causavano crash)."""
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(4000, self._check_updates_startup)
+            return
+        self._updater.check(silent=True)
 
     def _startup_flow(self):
         """All'avvio: recupera eventuale lavoro non salvato, poi chiedi il progetto."""
