@@ -18,7 +18,7 @@ inclusa la classificazione **NOVA / mNOVA** del grado di processazione.
      si prepara in memoria.
    - macOS → `DiarioAlimentare-macOS.zip` → estrai e apri `DiarioAlimentare.app`
 2. **macOS**: se compare l'avviso di sicurezza, fai **clic destro sull'app → Apri** la prima volta.
-3. A ogni avvio l'app parte **pulita** e mostra una finestra iniziale: **Apri progetto…**,
+3. A ogni avvio l'app parte **pulita** e mostra una finestra iniziale: **Apri da file…**,
    **Nuovo progetto vuoto** oppure un progetto tra quelli **recenti** (doppio clic sul recente,
    oppure selezionalo e premi **Apri**). Con «Nuovo progetto vuoto» dovrai caricare la BDA e
    creare/importare gli utenti (vedi §9, «Progetti»).
@@ -270,7 +270,7 @@ Genera un file con due fogli:
 
 **All'avvio l'app è vuota / mi chiede quale progetto aprire.**
 È normale: il lavoro sta nei **file di progetto** (§9). Apri un progetto recente, sfoglia con
-**Apri progetto…** oppure inizia con **Nuovo progetto vuoto**.
+**Apri da file…** oppure inizia con **Nuovo progetto vuoto**.
 
 **Ho chiuso l'app: ho perso il lavoro?**
 Alla chiusura l'app chiede di **salvare** se ci sono modifiche non salvate (titolo con `*`).

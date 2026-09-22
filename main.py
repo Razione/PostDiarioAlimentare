@@ -2130,7 +2130,7 @@ class App(QMainWindow):
         row = QHBoxLayout()
         btn_open_recent = QPushButton("Apri")
         btn_open_recent.setEnabled(False)   # attivo solo con un recente selezionato
-        btn_open = QPushButton("Apri progetto…")
+        btn_open = QPushButton("Apri da file…")
         btn_new = QPushButton("Nuovo progetto vuoto")
         row.addWidget(btn_open_recent)
         row.addWidget(btn_open)
