@@ -1153,6 +1153,7 @@ class DiaryTab(QWidget):
             return
         code = self._users[row]["code"]
         self.current_user = code
+        self._show_diary(True)   # mostra la griglia (nasconde il segnaposto)
         for d, frm in zip(DAYS, self.day_frames):
             frm.load_user(code)
             date_label = self.db.get_day_meta(code, d)[:-9]
