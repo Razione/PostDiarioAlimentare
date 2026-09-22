@@ -2128,8 +2128,11 @@ class App(QMainWindow):
             lay.addWidget(rec_list)
 
         row = QHBoxLayout()
+        btn_open_recent = QPushButton("Apri")
+        btn_open_recent.setEnabled(False)   # attivo solo con un recente selezionato
         btn_open = QPushButton("Apri progetto…")
         btn_new = QPushButton("Nuovo progetto vuoto")
+        row.addWidget(btn_open_recent)
         row.addWidget(btn_open)
         row.addWidget(btn_new)
         lay.addLayout(row)
@@ -2151,10 +2154,19 @@ class App(QMainWindow):
             result["action"], result["path"] = "open", item.data(Qt.ItemDataRole.UserRole)
             dlg.accept()
 
+        def do_open_recent():
+            items = rec_list.selectedItems() if rec_list is not None else []
+            if items:
+                do_recent(items[0])
+
+        btn_open_recent.clicked.connect(do_open_recent)
         btn_open.clicked.connect(do_open)
         btn_new.clicked.connect(do_new)
         if rec_list is not None:
             rec_list.itemDoubleClicked.connect(do_recent)
+            rec_list.itemSelectionChanged.connect(
+                lambda: btn_open_recent.setEnabled(bool(rec_list.selectedItems()))
+            )
         dlg.exec()
 
         action, path = result["action"], result["path"]
