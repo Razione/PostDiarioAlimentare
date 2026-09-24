@@ -46,7 +46,7 @@ from constants import (
     PROJECT_EXT, PROJECT_FILTER, PROJECT_OPEN_FILTER,
     ENERGY_LABEL, _MNOVA_COLS,
     _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
-    _parse_qty_grams, _qty_display, _open_excel, _parse_bda_categories,
+    _parse_qty_grams, _qty_display, _clean_cell, _open_excel, _parse_bda_categories,
     _category_code, _load_mnova_config, _compute_mnova,
     _compute_energy_kcal, _compute_user_totals, _compute_mnova_breakdown,
     _load_percent_config, _display_decimals,
@@ -1430,7 +1430,7 @@ class DiaryTab(QWidget):
         progress.setMinimumDuration(0)
 
         for row_idx, (_, row) in enumerate(data_rows.iterrows()):
-            user_code = str(row.iloc[0]).strip()
+            user_code = _clean_cell(row.iloc[0])
             if not user_code or user_code.lower() == "nan":
                 continue
 
@@ -1445,7 +1445,7 @@ class DiaryTab(QWidget):
                 if isinstance(raw_date, pd.Timestamp):
                     date_str = raw_date.strftime("%d/%m/%Y")
                 else:
-                    date_str = str(raw_date).strip()
+                    date_str = _clean_cell(raw_date)
 
                 if user_code not in seen:
                     seen.add(user_code)
@@ -1458,11 +1458,11 @@ class DiaryTab(QWidget):
                     luogo_col = day_col + food_offset - 1
                     meal_ora = meal_luogo = ""
                     if 0 <= ora_col < ncols:
-                        v = str(row.iloc[ora_col]).strip()
+                        v = _clean_cell(row.iloc[ora_col])
                         if v and v.lower() != "nan":
                             meal_ora = v
                     if 0 <= luogo_col < ncols:
-                        v = str(row.iloc[luogo_col]).strip()
+                        v = _clean_cell(row.iloc[luogo_col])
                         if v and v.lower() != "nan":
                             meal_luogo = v
 
@@ -1471,13 +1471,13 @@ class DiaryTab(QWidget):
                         fc = day_col + food_offset + i * 3
                         if fc >= ncols:
                             break
-                        food_name = str(row.iloc[fc]).strip()
+                        food_name = _clean_cell(row.iloc[fc])
                         if food_name.lower() == "nan":
                             food_name = ""
-                        desc = str(row.iloc[fc + 1]).strip() if fc + 1 < ncols else ""
+                        desc = _clean_cell(row.iloc[fc + 1]) if fc + 1 < ncols else ""
                         if desc.lower() == "nan":
                             desc = ""
-                        qty_raw = str(row.iloc[fc + 2]).strip() if fc + 2 < ncols else ""
+                        qty_raw = _clean_cell(row.iloc[fc + 2]) if fc + 2 < ncols else ""
                         if qty_raw.lower() == "nan":
                             qty_raw = ""
 

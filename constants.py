@@ -81,6 +81,16 @@ def _qty_display(qty) -> str:
     return "—" if qty is None else f"{qty:.4g}"
 
 
+_XLSX_CTRL_RE = re.compile(r"_x[0-9A-Fa-f]{4}_")
+
+
+def _clean_cell(value) -> str:
+    """Testo di una cella Excel ripulito: rimuove gli escape OOXML dei caratteri
+    di controllo (es. `_x000D_` = ritorno a capo, che openpyxl lascia nei valori
+    letti dai .xlsx) e gli spazi ai bordi."""
+    return _XLSX_CTRL_RE.sub("", str(value)).strip()
+
+
 DEFAULT_DECIMALS = 2
 
 
