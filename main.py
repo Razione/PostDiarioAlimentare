@@ -45,7 +45,7 @@ from constants import (
     MEALS, MEAL_ORDER, DAYS, APP_TITLE, APP_VERSION, EXPORT_FORMAT, EXPORT_VERSION,
     PROJECT_EXT, PROJECT_FILTER, PROJECT_OPEN_FILTER,
     ENERGY_LABEL, _MNOVA_COLS,
-    _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS,
+    _SKIP_BDA_COLS, _CONTENT_EXPORT_MEALS, _CONTENT_EXPORT_DAY_COLS, DEFAULT_FOOD_NAME,
     _parse_qty_grams, _qty_display, _clean_cell, _open_excel, _parse_bda_categories,
     _category_code, _load_mnova_config, _compute_mnova,
     _compute_energy_kcal, _compute_user_totals, _compute_mnova_breakdown,
@@ -1466,7 +1466,7 @@ class DiaryTab(QWidget):
                         if v and v.lower() != "nan":
                             meal_luogo = v
 
-                    last_food_name = ""
+                    last_food_name = ""   # alimento da riportare, azzerato a ogni pasto
                     for i in range(max_items):
                         fc = day_col + food_offset + i * 3
                         if fc >= ncols:
@@ -1484,9 +1484,11 @@ class DiaryTab(QWidget):
                         if not food_name and not desc and not qty_raw:
                             continue
                         if not food_name:
-                            food_name = last_food_name
-                        if not food_name:
-                            continue
+                            # Alimento/bevanda non ripetuto: si applica l'ultimo scritto
+                            # nello stesso pasto (finché non ne compare uno nuovo). Se
+                            # nel pasto non ce n'è ancora nessuno (voce con sola
+                            # descrizione), si usa una parola di default.
+                            food_name = last_food_name or DEFAULT_FOOD_NAME
                         last_food_name = food_name
 
                         entries.append({

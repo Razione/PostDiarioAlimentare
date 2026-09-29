@@ -138,6 +138,10 @@ Gestione anagrafica dei soggetti e relative note.
   associati chiede in un elenco quali sovrascrivere). Già nella finestra di scelta vedi
   **quanti (e quali) sono i nuovi diari** — l'elenco è in «Mostra dettagli» — così puoi
   controllarli **prima** di applicare; a fine import c'è comunque il riepilogo.
+  Se una voce ha **solo la descrizione** e non l'alimento/bevanda, si applica **l'ultimo
+  alimento scritto nello stesso pasto** (finché non ne compare uno nuovo); se nel pasto non
+  ce n'è ancora nessuno, nel campo Alimento viene messo **«Alimento_SenzaNome»** (così la voce
+  non si perde; il cibo resta nella descrizione/note).
 - **Seleziona tutti / Deseleziona tutti** e **Esporta selezionati** (export Excel del riepilogo).
 - Pulsante **◀ Nascondi utenti** (in alto a destra): comprime la barra per avere più spazio.
 

@@ -30,6 +30,10 @@ PROJECT_OPEN_FILTER = (
     f"Progetti Diario Alimentare (*{PROJECT_EXT} *.json.gz *.json);;Tutti i file (*.*)"
 )
 
+# Nome usato quando la voce ha solo la descrizione e non l'alimento/bevanda,
+# così l'entry non viene persa all'import del Content Export.
+DEFAULT_FOOD_NAME = "Alimento_SenzaNome"
+
 # Struttura del Content Export: offset rispetto alla colonna "Data" di ciascun giorno
 # (meal_name, offset_primo_alimento, numero_max_alimenti)
 _CONTENT_EXPORT_MEALS = [
