@@ -1012,6 +1012,12 @@ class DiaryTab(QWidget):
         btn_export.clicked.connect(self._export_selected)
         left_layout.addWidget(btn_export)
 
+        btn_verify_sel = QPushButton("Verifica/riassegna BDA (selezionati)")
+        btn_verify_sel.setToolTip(
+            "Ricontrolla e ricollega le associazioni BDA di tutti gli utenti selezionati.")
+        btn_verify_sel.clicked.connect(self._verify_bda_selected)
+        left_layout.addWidget(btn_verify_sel)
+
         splitter.addWidget(left)
 
         # ── Pannello destro: 4 tab dei giorni ─────────────────────────────────
@@ -1199,6 +1205,69 @@ class DiaryTab(QWidget):
             detail.append("VALORI MODIFICATI dall'associazione:\n  " + "\n  ".join(rep["changed"]))
         if rep["missing"]:
             detail.append("NON PIÙ IN BDA (da ri-associare a mano):\n  " + "\n  ".join(rep["missing"]))
+        if detail:
+            box.setDetailedText("\n\n".join(detail))
+        box.exec()
+
+    def _verify_bda_selected(self):
+        if not self._checked_users:
+            QMessageBox.information(self, "Verifica BDA", "Nessun utente selezionato.")
+            return
+        if self.db.count_bda() == 0:
+            QMessageBox.warning(self, "Verifica BDA", "Nessuna BDA caricata.")
+            return
+        codes = sorted(self._checked_users)
+        if QMessageBox.question(
+            self, "Verifica / riassegna BDA (selezionati)",
+            f"Verificare e riassegnare la BDA per {len(codes)} utenti selezionati?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        progress = QProgressDialog(
+            "Verifica/riassegna BDA in corso…", None, 0, len(codes), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        tot_ok = 0
+        relinked, changed, missing = [], [], []
+        for idx, code in enumerate(codes):
+            rep = self.db.reassign_user_bda(code)
+            tot_ok += rep["ok"]
+            relinked += [f"{code}: {x}" for x in rep["relinked"]]
+            changed += [f"{code}: {x}" for x in rep["changed"]]
+            missing += [f"{code}: {x}" for x in rep["missing"]]
+            progress.setValue(idx + 1)
+            QApplication.processEvents()
+        progress.setValue(len(codes))
+
+        # Aggiorna le viste e i colori di stato.
+        for frm in self.day_frames:
+            frm._refresh()
+        self.nutri_frame._refresh()
+        self.refresh_users()
+        if self.on_change:
+            self.on_change()
+
+        summary = (
+            f"Utenti elaborati: {len(codes)}\n\n"
+            f"✓ Già corrette:        {tot_ok}\n"
+            f"🔗 Ri-collegate:        {len(relinked)}\n"
+            f"✎ Valori modificati:   {len(changed)}\n"
+            f"⚠ Non più in BDA:      {len(missing)}"
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Verifica / riassegna BDA (selezionati)")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(summary)
+        detail = []
+        if relinked:
+            detail.append("RI-COLLEGATE (id aggiornato):\n  " + "\n  ".join(relinked))
+        if changed:
+            detail.append("VALORI MODIFICATI dall'associazione:\n  " + "\n  ".join(changed))
+        if missing:
+            detail.append("NON PIÙ IN BDA (da ri-associare a mano):\n  " + "\n  ".join(missing))
         if detail:
             box.setDetailedText("\n\n".join(detail))
         box.exec()

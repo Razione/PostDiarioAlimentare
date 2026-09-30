@@ -143,6 +143,9 @@ Gestione anagrafica dei soggetti e relative note.
   ce n'è ancora nessuno, nel campo Alimento viene messo **«Alimento_SenzaNome»** (così la voce
   non si perde; il cibo resta nella descrizione/note).
 - **Seleziona tutti / Deseleziona tutti** e **Esporta selezionati** (export Excel del riepilogo).
+- **Verifica/riassegna BDA (selezionati)**: esegue in blocco la verifica e il ricollegamento
+  delle associazioni BDA per **tutti gli utenti selezionati**, con un riepilogo complessivo
+  (già corrette / ri-collegate / valori modificati / non più in BDA).
 - Pulsante **◀ Nascondi utenti** (in alto a destra): comprime la barra per avere più spazio.
 
 ### Griglia dei giorni (destra)
